@@ -1384,11 +1384,13 @@ var paper=function(t,e){var i=(t=t||require("./node/self.js")).window,n=t.docume
     }
   }
   function applyLayout() {
+    try {
     var ph = window.phet;
     if (!ph || !ph.joist || !ph.joist.sim) return false;
     var sim = document.getElementById('sim');
     if (!sim) return false;
-    var scr = ph.joist.sim.screens[0];
+    var scr = ph.joist.sim.screens && ph.joist.sim.screens[0];
+    if (!scr || !scr.view || !scr.view.children) return false;
     var view = scr.view;
     var sv = view.children[0];
     if (!sv || !sv.children) return false;
@@ -1462,14 +1464,60 @@ var paper=function(t,e){var i=(t=t||require("./node/self.js")).window,n=t.docume
 
     ensureCeil(); ensureCSS();
     return true;
+    } catch(e) { return false; }
   }
   function tick(n) {
     if (!applyLayout() && n < 30) setTimeout(function(){ tick(n+1); }, 150);
-    else setInterval(function(){ applyLayout(); }, 800);
+    else setInterval(function(){ try { applyLayout(); } catch(e) {} }, 800);
   }
   function start() { setTimeout(function(){ tick(0); }, 800); }
   if (document.readyState === 'complete') start();
   else window.addEventListener('load', start);
+})();
+</script>
+<script>
+// EigenNode auto-height v2.3
+// Custom variant for this PhET sim:
+//
+// 1. The standard snippet uses body.scrollHeight + children-bbox, both of
+//    which include the #sim div (position:absolute, height set by PhET to
+//    window.innerHeight — 700-1000+px depending on iframe size). That
+//    overshoots the visible content. We use body.clientHeight, which
+//    tracks the explicit body{height:Xpx; overflow:hidden} clip set by
+//    the layout script above (clamped to shelf bottom).
+//
+// 2. PhET reserves ~30px for a nav bar inside the display. So content
+//    scale is min(innerWidth/1024, (innerHeight-30)/618). With our
+//    innerWidth=750 override (scale_w=0.7324), the scale stays
+//    width-limited only when innerHeight >= 30 + 618*0.7324 = 483.
+//    If we reported just body.clientHeight (~462), the parent would
+//    resize the iframe to 462; innerHeight then drops below 483, scale
+//    becomes height-limited and shrinks, shelf moves up, our clipH
+//    recomputes smaller, we postMessage smaller, parent shrinks again,
+//    and the layout collapses. MIN_REPORT_H = 490 breaks that loop.
+var MIN_REPORT_H = 490;
+(function() {
+  var last = 0;
+  function report() {
+    var b = document.body;
+    if (!b) return;
+    var h = b.clientHeight;
+    if (h <= 0) return;
+    var out = Math.max(h + 4, MIN_REPORT_H);
+    if (Math.abs(out - last) >= 2) {
+      last = out;
+      try { window.parent.postMessage({ type: 'resize', height: out }, '*'); } catch(e) {}
+    }
+  }
+  function startAH() {
+    report();
+    if (window.ResizeObserver && document.body) {
+      try { new ResizeObserver(report).observe(document.body); } catch(e) {}
+    }
+    setInterval(report, 1000);
+  }
+  if (document.readyState === 'complete') startAH();
+  else window.addEventListener('load', startAH);
 })();
 </script>
 </body>
