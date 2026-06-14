@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Spring Stretch</title>
+  <!-- Original AoPS interactive. Replaces the third-party "Masses and Springs: Basics" simulation. -->
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 700px; height: 500px; overflow: hidden;
+      background: #f5f5f5;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+    canvas { display: block; touch-action: none; }
+  </style>
+</head>
+<body>
+<canvas id="c" width="700" height="500"></canvas>
+<script>
+// EigenNode auto-height v2.4
+(function() {
+  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
+  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
+  // space inside the iframe — AoPS classroom embeds in a narrower column
+  // than the 600px content, so a horizontal scrollbar appears and steals
+  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
+  var BUFFER = 4;
+  var H_SCROLLBAR = 18;
+  var measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    // Temporarily neutralise body's height/min-height (overriding stylesheet
+    // rules with !important) so scrollHeight reflects actual content extent.
+    // Without this, patterns like body { height: 100vh } cause scrollHeight
+    // to echo the iframe's current viewport — adding BUFFER each cycle
+    // ratchets the iframe taller forever. Browser doesn't paint until this
+    // synchronous block returns, so no visible flicker.
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    // Check the documentElement only — that's the element that owns the
+    // iframe's horizontal scrollbar. Body can be narrower than the iframe
+    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
+    // 1-2px overflow that doesn't actually trigger a scrollbar.
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var h = measure();
+    if (h > 0 && Math.abs(h - last) >= 2) {
+      last = h;
+      window.parent.postMessage({ type: 'resize', height: h }, '*');
+    }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+})();
+</script>
+<script>
+(() => {
+  'use strict';
+
+  // ── Design constants (all layout in 700×500 design units) ──────────────
+  const W = 700, H = 500;
+  const PXCM = 4.2;                 // canvas px per simulated cm
+  const ANCHOR_Y = 32;              // springs hang from here (bar bottom)
+  const L0 = 50;                    // natural length of each spring, cm
+  const FLOOR_Y = 448;              // shelf top
+  const G = 9.8;                    // m/s^2
+  const K_MIN = 3, K_MAX = 12;      // N/m, "Small".."Large"
+  // Default spring constant calibrated so the 100 g cylinder stretches the
+  // spring exactly 14.70 cm (the class histogram's modal 14.5–15.0 cm bin):
+  // k = mg/x = 0.100 * 9.8 / 0.147 = 6.6667 N/m.
+  const K_DEFAULT = 0.100 * G / 0.147;
+  const DAMP = 0.14;                // s^-1: light damping, a = g - (k/m)x - DAMP*v
+  const DT = 1 / 240;               // fixed physics substep, s
+  const SLOW_FACTOR = 0.25;         // "Slow" radio time scale
+  const HOOK_H = 8;                 // px between a mass's hook top and body top
+  const DETACH_DX = 48;             // px sideways pull that unhooks a mass
+  const SNAP_R = 34;                // px hook-snap radius
+  const MIN_EXT = -0.42;            // m, max compression (spring >= 8 cm long)
+
+  // ── URL parameters: ?k1=<N/m>&k2=<N/m>&slow=1 ──────────────────────────
+  const qs = new URLSearchParams(location.search);
+  const parseK = name => {
+    const v = parseFloat(qs.get(name));
+    return isFinite(v) ? Math.min(K_MAX, Math.max(K_MIN, v)) : K_DEFAULT;
+  };
+  const K1_INIT = parseK('k1'), K2_INIT = parseK('k2');
+  const SLOW_INIT = qs.get('slow') === '1';
+
+  // ── Scene objects ───────────────────────────────────────────────────────
+  const springs = [
+    { x: 165, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
+    { x: 345, k: K2_INIT, ext: 0, v: 0, massIdx: -1 },
+  ];
+
+  // Mystery masses (values hidden in the UI — see build notes):
+  // teal = 75 g, violet = 150 g, orange = 200 g.
+  const massDefs = [
+    { m: 0.250, label: '250 g' },
+    { m: 0.100, label: '100 g' },
+    { m: 0.050, label: '50 g' },
+    { m: 0.075, label: '?', colors: ['#56c4b2', '#1e7c6d'] },
+    { m: 0.150, label: '?', colors: ['#b693e0', '#6e4d9e'] },
+    { m: 0.200, label: '?', colors: ['#f4ab63', '#c26a1e'] },
+  ];
+  const masses = [];
+  {
+    let xCursor = 66;
+    for (const def of massDefs) {
+      const r = 14.5 * Math.cbrt(def.m / 0.1);
+      const h = 2.1 * r;
+      const cx = xCursor + r;
+      xCursor = cx + r + 12;
+      masses.push({
+        m: def.m, label: def.label, colors: def.colors || null,
+        r, h, homeCx: cx,
+        cx, topY: FLOOR_Y - HOOK_H - h, vy: 0, attached: -1,
+      });
+    }
+  }
+
+  // ── UI state ────────────────────────────────────────────────────────────
+  const checks = { unstretched: false, resting: false, movable: false };
+  let movY = 340;
+  const ruler = { x: 8, y: 54 };
+  const RUL_W = 38, RUL_LEN = 90 * PXCM, RUL_H = RUL_LEN + 12;
+  let slowMode = SLOW_INIT, paused = false, hintDone = false;
+  let drag = null;
+
+  // ── Control geometry ────────────────────────────────────────────────────
+  const P1 = { x: 452, y: 12, w: 240, h: 96 };
+  const ROWS = [
+    { key: 'unstretched', label: 'Unstretched Length', color: '#3a6fd8', y: 34 },
+    { key: 'resting',     label: 'Resting Position',   color: '#2e9e44', y: 60 },
+    { key: 'movable',     label: 'Movable Line',       color: '#d23b3b', y: 86 },
+  ];
+  const P2 = { x: 452, y: 116, w: 240, h: 122 };
+  const SLIDERS = [
+    { name: 'Spring 1 Strength', titleY: 140, ty: 160 },
+    { name: 'Spring 2 Strength', titleY: 194, ty: 214 },
+  ];
+  const TRACK_X = 470, TRACK_W = 190;
+  const RADIO_N = { x: 140, y: 481 }, RADIO_S = { x: 228, y: 481 };
+  const PAUSE = { x: 308, y: 481, r: 13 };
+  const RESET = { x: 664, y: 474, r: 15 };
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+  const inRect = (mx, my, x, y, w, h) => mx >= x && mx <= x + w && my >= y && my <= y + h;
+  const springEndY = s => ANCHOR_Y + (L0 + s.ext * 100) * PXCM;
+  const extFromEndY = ey => ((ey - ANCHOR_Y) / PXCM - L0) / 100;
+  const floorExt = mass => ((FLOOR_Y - HOOK_H - mass.h - ANCHOR_Y) / PXCM - L0) / 100;
+  const eqExt = s => (s.massIdx >= 0 ? masses[s.massIdx].m * G / s.k : 0);
+  const thumbX = k => TRACK_X + (k - K_MIN) / (K_MAX - K_MIN) * TRACK_W;
+
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // ── Canvas + scale-to-iframe-width ──────────────────────────────────────
+  // Design size is 700×500. The classroom passes this sim first in a 600-wide
+  // iframe and later in a 1500-wide one ("We could get better results if we
+  // made the entire simulation bigger"), so the whole scene scales with the
+  // viewport width. Height is reported by the auto-height snippet above.
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  let scale = 1, dpr = 1;
+  function fit() {
+    const vw = window.innerWidth || W;
+    let s = clamp(vw / W, 0.6, 2.2);
+    if (Math.abs(s - 1) < 0.03) s = 1;
+    scale = s;
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(W * s * dpr);
+    canvas.height = Math.round(H * s * dpr);
+    canvas.style.width = (W * s) + 'px';
+    canvas.style.height = (H * s) + 'px';
+    document.body.style.width = (W * s) + 'px';
+    document.body.style.height = (H * s) + 'px';
+  }
+  window.addEventListener('resize', fit);
+
+  // ── Physics ─────────────────────────────────────────────────────────────
+  function step(dt) {
+    for (const s of springs) {
+      const held = drag && drag.type === 'mass' && s.massIdx >= 0 && drag.i === s.massIdx;
+      if (s.massIdx >= 0 && !held) {
+        const mass = masses[s.massIdx];
+        const a = G - (s.k / mass.m) * s.ext - DAMP * s.v;
+        s.v += a * dt;
+        s.ext += s.v * dt;
+        const fe = floorExt(mass);
+        if (s.ext > fe) { s.ext = fe; if (s.v > 0) s.v = 0; }   // mass rests on shelf
+        if (s.ext < MIN_EXT) { s.ext = MIN_EXT; if (s.v < 0) s.v = 0; }
+      } else if (s.massIdx < 0 && s.ext !== 0) {
+        // empty spring eases back to natural length
+        s.ext *= Math.exp(-10 * dt);
+        if (Math.abs(s.ext) < 2e-4) s.ext = 0;
+        s.v = 0;
+      }
+    }
+    // free masses fall to the shelf
+    for (let i = 0; i < masses.length; i++) {
+      const mass = masses[i];
+      if (mass.attached >= 0) continue;
+      if (drag && drag.type === 'mass' && drag.i === i) continue;
+      const floorTop = FLOOR_Y - HOOK_H - mass.h;
+      if (mass.topY < floorTop) {
+        mass.vy += G * 100 * PXCM * dt;       // 9.8 m/s² in design px/s²
+        mass.topY += mass.vy * dt;
+        if (mass.topY >= floorTop) { mass.topY = floorTop; mass.vy = 0; }
+      } else { mass.topY = floorTop; mass.vy = 0; }
+    }
+  }
+
+  // keep attached masses glued to their spring's end
+  function sync() {
+    for (let si = 0; si < 2; si++) {
+      const s = springs[si];
+      if (s.massIdx >= 0) {
+        const mass = masses[s.massIdx];
+        const pull = (drag && drag.type === 'mass' && drag.i === s.massIdx) ? (drag.pull || 0) : 0;
+        mass.cx = s.x + pull;
+        mass.topY = springEndY(s) - 2;
+      }
+    }
+  }
+
+  function attach(si, mi) {
+    const s = springs[si], mass = masses[mi];
+    s.massIdx = mi; mass.attached = si;
+    s.ext = clamp(extFromEndY(mass.topY + 2), MIN_EXT, floorExt(mass));
+    s.v = 0; mass.vy = 0;
+    hintDone = true;
+  }
+
+  function findSnap(mass) {
+    for (let si = 0; si < 2; si++) {
+      const s = springs[si];
+      if (s.massIdx >= 0) continue;
+      if (dist(mass.cx, mass.topY + 2, s.x, springEndY(s)) < SNAP_R) return si;
+    }
+    return -1;
+  }
+
+  // ── Reset ───────────────────────────────────────────────────────────────
+  function resetAll() {
+    drag = null;
+    springs[0].k = K1_INIT; springs[1].k = K2_INIT;
+    for (const s of springs) { s.ext = 0; s.v = 0; s.massIdx = -1; }
+    for (const mass of masses) {
+      mass.cx = mass.homeCx;
+      mass.topY = FLOOR_Y - HOOK_H - mass.h;
+      mass.vy = 0; mass.attached = -1;
+    }
+    checks.unstretched = checks.resting = checks.movable = false;
+    movY = 340; ruler.x = 8; ruler.y = 54;
+    slowMode = SLOW_INIT; paused = false; hintDone = false;
+  }
+
+  // ── Hit testing ─────────────────────────────────────────────────────────
+  function massDrawOrder() {
+    const plain = [], att = [], drg = [];
+    for (let i = 0; i < masses.length; i++) {
+      if (drag && drag.type === 'mass' && drag.i === i) drg.push(i);
+      else if (masses[i].attached >= 0) att.push(i);
+      else plain.push(i);
+    }
+    return plain.concat(att, drg);
+  }
+  function massHit(mx, my) {
+    const order = massDrawOrder();
+    for (let oi = order.length - 1; oi >= 0; oi--) {
+      const i = order[oi], mass = masses[i];
+      if (inRect(mx, my, mass.cx - mass.r - 3, mass.topY - 3,
+                 2 * (mass.r + 3), HOOK_H + mass.h + 6)) return i;
+    }
+    return -1;
+  }
+  const hitLineKnob = (mx, my) => checks.movable && inRect(mx, my, 432, movY - 11, 26, 22);
+  const hitLineBody = (mx, my) => checks.movable && Math.abs(my - movY) < 8 && mx >= 56 && mx <= 456;
+
+  function setKFromX(i, mx) {
+    springs[i].k = K_MIN + clamp((mx - TRACK_X) / TRACK_W, 0, 1) * (K_MAX - K_MIN);
+  }
+
+  // ── Pointer events ──────────────────────────────────────────────────────
+  const toLocal = e => {
+    const r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
+  };
+
+  canvas.addEventListener('pointerdown', e => {
+    if (drag) return;                       // single active pointer
+    const [mx, my] = toLocal(e);
+    canvas.setPointerCapture(e.pointerId);
+
+    if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3) { resetAll(); return; }
+    if (dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) { paused = !paused; return; }
+    if (inRect(mx, my, RADIO_N.x - 12, RADIO_N.y - 13, 86, 26)) { slowMode = false; return; }
+    if (inRect(mx, my, RADIO_S.x - 12, RADIO_S.y - 13, 72, 26)) { slowMode = true; return; }
+    for (const row of ROWS) {
+      if (inRect(mx, my, P1.x + 6, row.y - 12, P1.w - 12, 24)) {
+        checks[row.key] = !checks[row.key];
+        return;
+      }
+    }
+    for (let i = 0; i < 2; i++) {
+      if (inRect(mx, my, TRACK_X - 10, SLIDERS[i].ty - 13, TRACK_W + 20, 26)) {
+        drag = { type: 'slider', i };
+        setKFromX(i, mx);
+        return;
+      }
+    }
+    if (hitLineKnob(mx, my)) { drag = { type: 'line', dy: my - movY }; return; }
+    const mi = massHit(mx, my);
+    if (mi >= 0) {
+      const mass = masses[mi];
+      if (mass.attached >= 0) springs[mass.attached].v = 0;   // grabbing stops it
+      mass.vy = 0;
+      drag = { type: 'mass', i: mi, dx: mx - mass.cx, dy: my - mass.topY, pull: 0, snap: -1 };
+      return;
+    }
+    if (hitLineBody(mx, my)) { drag = { type: 'line', dy: my - movY }; return; }
+    if (inRect(mx, my, ruler.x, ruler.y, RUL_W, RUL_H)) {
+      drag = { type: 'ruler', dx: mx - ruler.x, dy: my - ruler.y };
+      return;
+    }
+  });
+
+  canvas.addEventListener('pointermove', e => {
+    const [mx, my] = toLocal(e);
+    if (!drag) { updateCursor(mx, my); return; }
+    canvas.style.cursor = drag.type === 'slider' ? 'pointer' : 'grabbing';
+    if (drag.type === 'slider') { setKFromX(drag.i, mx); return; }
+    if (drag.type === 'line') { movY = clamp(my - drag.dy, 40, 466); return; }
+    if (drag.type === 'ruler') {
+      ruler.x = clamp(mx - drag.dx, -RUL_W + 16, W - 16);
+      ruler.y = clamp(my - drag.dy, -RUL_H + 30, H - 30);
+      return;
+    }
+    if (drag.type === 'mass') {
+      const mass = masses[drag.i];
+      if (mass.attached >= 0) {
+        const s = springs[mass.attached];
+        const desiredCx = mx - drag.dx;
+        if (Math.abs(desiredCx - s.x) > DETACH_DX) {
+          // pulled sideways off the hook
+          s.massIdx = -1; s.v = 0;
+          mass.attached = -1;
+          mass.cx = clamp(desiredCx, 16, W - 16);
+          mass.topY = clamp(my - drag.dy, 6, H - 40);
+          drag.pull = 0;
+          drag.snap = findSnap(mass);
+        } else {
+          drag.pull = (desiredCx - s.x) * 0.35;
+          s.ext = clamp(extFromEndY((my - drag.dy) + 2), MIN_EXT, floorExt(mass));
+          s.v = 0;
+        }
+      } else {
+        mass.cx = clamp(mx - drag.dx, 16, W - 16);
+        mass.topY = clamp(my - drag.dy, 6, H - 40);
+        drag.snap = findSnap(mass);
+      }
+    }
+  });
+
+  function endDrag() {
+    if (!drag) return;
+    if (drag.type === 'mass') {
+      const mass = masses[drag.i];
+      if (mass.attached < 0) {
+        const si = findSnap(mass);
+        if (si >= 0) attach(si, drag.i);
+        else mass.cx = clamp(mass.cx, 70, 430);   // dropped masses land on the shelf
+      }
+      // releasing an attached mass: v is already 0 — it oscillates from here
+    }
+    drag = null;
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  function updateCursor(mx, my) {
+    let c = 'default';
+    if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3 ||
+        dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3 ||
+        inRect(mx, my, RADIO_N.x - 12, RADIO_N.y - 13, 86, 26) ||
+        inRect(mx, my, RADIO_S.x - 12, RADIO_S.y - 13, 72, 26)) c = 'pointer';
+    else {
+      let done = false;
+      for (const row of ROWS) {
+        if (inRect(mx, my, P1.x + 6, row.y - 12, P1.w - 12, 24)) { c = 'pointer'; done = true; break; }
+      }
+      for (let i = 0; i < 2 && !done; i++) {
+        if (inRect(mx, my, TRACK_X - 10, SLIDERS[i].ty - 13, TRACK_W + 20, 26)) { c = 'pointer'; done = true; }
+      }
+      if (!done && (hitLineKnob(mx, my) || hitLineBody(mx, my))) { c = 'grab'; done = true; }
+      if (!done && massHit(mx, my) >= 0) { c = 'grab'; done = true; }
+      if (!done && inRect(mx, my, ruler.x, ruler.y, RUL_W, RUL_H)) { c = 'grab'; done = true; }
+    }
+    canvas.style.cursor = c;
+  }
+
+  // ── Drawing ─────────────────────────────────────────────────────────────
+  function drawBarAndShelf() {
+    let g = ctx.createLinearGradient(0, 14, 0, ANCHOR_Y);
+    g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
+    ctx.fillStyle = g;
+    rr(110, 14, 290, ANCHOR_Y - 14, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(60,40,20,0.6)';
+    for (const sx of [120, 390]) {
+      ctx.beginPath(); ctx.arc(sx, 23, 2.5, 0, 2 * Math.PI); ctx.fill();
+    }
+    for (let i = 0; i < 2; i++) {
+      ctx.beginPath(); ctx.arc(springs[i].x - 28, 23, 8, 0, 2 * Math.PI);
+      ctx.fillStyle = '#5a6b7d'; ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Segoe UI'; ctx.textAlign = 'center';
+      ctx.fillText(String(i + 1), springs[i].x - 28, 26.5);
+    }
+    g = ctx.createLinearGradient(0, FLOOR_Y, 0, FLOOR_Y + 10);
+    g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
+    ctx.fillStyle = g;
+    rr(56, FLOOR_Y, 380, 10, 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.stroke();
+    ctx.fillStyle = '#8a6238';
+    ctx.fillRect(74, FLOOR_Y + 10, 12, 8);
+    ctx.fillRect(406, FLOOR_Y + 10, 12, 8);
+  }
+
+  function drawRefLines() {
+    ctx.save();
+    if (checks.unstretched) {
+      const y = ANCHOR_Y + L0 * PXCM;
+      ctx.setLineDash([7, 5]); ctx.strokeStyle = '#3a6fd8'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(108, y); ctx.lineTo(402, y); ctx.stroke();
+    }
+    if (checks.resting) {
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = '#2e9e44'; ctx.lineWidth = 2;
+      for (const s of springs) {
+        const y = ANCHOR_Y + (L0 + eqExt(s) * 100) * PXCM;
+        ctx.beginPath(); ctx.moveTo(s.x - 52, y); ctx.lineTo(s.x + 52, y); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawSpring(s) {
+    const x = s.x, ey = springEndY(s);
+    const yA = ANCHOR_Y + 9;
+    let yB = ey - 9; if (yB < yA + 6) yB = yA + 6;
+    const N = 11, R = 17, steps = 220;
+    const coil = () => {
+      ctx.beginPath();
+      ctx.moveTo(x, ANCHOR_Y);
+      ctx.lineTo(x, yA);
+      for (let j = 1; j <= steps; j++) {
+        const t = j / steps;
+        ctx.lineTo(x + R * Math.sin(t * N * 2 * Math.PI), yA + (yB - yA) * t);
+      }
+      ctx.lineTo(x, ey - 5);
+    };
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    coil(); ctx.strokeStyle = '#5f7d9e'; ctx.lineWidth = 3.2; ctx.stroke();
+    coil(); ctx.strokeStyle = '#a9c6e4'; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, ey - 2.5, 3.4, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#5f7d9e'; ctx.lineWidth = 2; ctx.stroke();
+  }
+
+  function drawMovableLine() {
+    if (!checks.movable) return;
+    ctx.save();
+    ctx.setLineDash([8, 6]); ctx.strokeStyle = '#d23b3b'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(60, movY); ctx.lineTo(434, movY); ctx.stroke();
+    ctx.restore();
+    rr(434, movY - 8, 20, 16, 4);
+    ctx.fillStyle = '#d23b3b'; ctx.fill();
+    ctx.strokeStyle = '#9e2424'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    for (const oy of [-3, 0, 3]) ctx.fillRect(439, movY + oy - 0.8, 10, 1.6);
+  }
+
+  function drawRuler() {
+    const x = ruler.x, y = ruler.y;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.18)'; ctx.shadowBlur = 5;
+    ctx.shadowOffsetX = 1.5; ctx.shadowOffsetY = 1.5;
+    rr(x, y, RUL_W, RUL_H, 3);
+    ctx.fillStyle = '#fbf3cf'; ctx.fill();
+    ctx.restore();
+    rr(x, y, RUL_W, RUL_H, 3);
+    ctx.strokeStyle = '#b9a868'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#5d5132'; ctx.strokeStyle = '#5d5132'; ctx.textAlign = 'left';
+    for (let cm = 0; cm <= 90; cm++) {       // 0 cm is exactly the ruler's top edge
+      const ty = y + cm * PXCM;
+      const len = (cm % 10 === 0) ? 13 : (cm % 5 === 0) ? 9.5 : 6;
+      ctx.beginPath(); ctx.moveTo(x, ty); ctx.lineTo(x + len, ty);
+      ctx.lineWidth = (cm % 10 === 0) ? 1.2 : 0.7;
+      ctx.stroke();
+      if (cm % 10 === 0) {
+        ctx.font = '8.5px Segoe UI';
+        ctx.fillText(String(cm), x + 16, Math.max(ty + 3, y + 8));
+      }
+    }
+    ctx.font = 'italic 8.5px Segoe UI';
+    ctx.fillText('cm', x + 16, y + RUL_H - 4);
+  }
+
+  function drawMass(mass, dragged) {
+    const cx = mass.cx, topY = mass.topY, r = mass.r, h = mass.h;
+    const bodyY = topY + HOOK_H;
+    ctx.beginPath(); ctx.arc(cx, topY + 3.5, 3.2, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#4a4f55'; ctx.lineWidth = 1.8; ctx.stroke();
+    ctx.fillStyle = '#4a4f55';
+    ctx.fillRect(cx - 1.2, topY + 6.2, 2.4, HOOK_H - 6);
+    if (dragged) { ctx.save(); ctx.shadowColor = 'rgba(40,90,160,0.8)'; ctx.shadowBlur = 12; }
+    const cols = mass.colors || ['#aab4be', '#6e7882'];
+    const g = ctx.createLinearGradient(cx - r, 0, cx + r, 0);
+    g.addColorStop(0, cols[1]); g.addColorStop(0.32, cols[0]); g.addColorStop(1, cols[1]);
+    ctx.fillStyle = g;
+    rr(cx - r, bodyY, 2 * r, h, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1; ctx.stroke();
+    if (dragged) ctx.restore();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    rr(cx - r + 1.5, bodyY + 1, 2 * r - 3, 4, 2); ctx.fill();
+    ctx.save();
+    ctx.fillStyle = '#fff';
+    ctx.font = mass.colors ? 'bold 14px Segoe UI'
+      : 'bold ' + clamp(Math.round(r * 0.62), 8, 11) + 'px Segoe UI';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 2;
+    ctx.fillText(mass.label, cx, bodyY + h / 2 + (mass.colors ? 5 : 3.5));
+    ctx.restore();
+  }
+
+  function drawSnapHighlight() {
+    if (!(drag && drag.type === 'mass')) return;
+    const mass = masses[drag.i];
+    if (mass.attached >= 0) return;
+    const si = drag.snap;
+    if (si == null || si < 0) return;
+    const s = springs[si];
+    ctx.save();
+    ctx.setLineDash([4, 3]); ctx.strokeStyle = '#efa020'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, springEndY(s) - 1, 13, 0, 2 * Math.PI); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPanels() {
+    for (const p of [P1, P2]) {
+      rr(p.x, p.y, p.w, p.h, 8);
+      ctx.fillStyle = 'rgba(255,255,255,0.93)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1; ctx.stroke();
+    }
+    for (const row of ROWS) {
+      const bx = 464, by = row.y - 7;
+      rr(bx, by, 14, 14, 3);
+      ctx.fillStyle = checks[row.key] ? '#3a78c2' : '#fff'; ctx.fill();
+      ctx.strokeStyle = checks[row.key] ? '#2c5f9e' : '#98a2ac'; ctx.lineWidth = 1.2; ctx.stroke();
+      if (checks[row.key]) {
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(bx + 3, by + 7.5); ctx.lineTo(bx + 6, by + 10.5); ctx.lineTo(bx + 11, by + 3.5);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#2c3540'; ctx.font = '11.5px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillText(row.label, 486, row.y + 4);
+      ctx.save();
+      ctx.setLineDash([6, 4]); ctx.strokeStyle = row.color; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(648, row.y); ctx.lineTo(682, row.y); ctx.stroke();
+      ctx.restore();
+    }
+    for (let i = 0; i < 2; i++) {
+      const sl = SLIDERS[i], ty = sl.ty;
+      ctx.fillStyle = '#2c3540'; ctx.font = 'bold 11px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillText(sl.name, TRACK_X, sl.titleY);
+      const nx = thumbX(K_DEFAULT);            // calibrated-default notch
+      ctx.fillStyle = '#b8c2cc';
+      ctx.beginPath();
+      ctx.moveTo(nx, ty + 6); ctx.lineTo(nx - 3.5, ty + 12); ctx.lineTo(nx + 3.5, ty + 12);
+      ctx.closePath(); ctx.fill();
+      rr(TRACK_X, ty - 2, TRACK_W, 4, 2); ctx.fillStyle = '#cdd5dc'; ctx.fill();
+      const tx = thumbX(springs[i].k);
+      if (tx - TRACK_X > 4) { rr(TRACK_X, ty - 2, tx - TRACK_X, 4, 2); ctx.fillStyle = '#8fb0d4'; ctx.fill(); }
+      rr(tx - 5, ty - 10, 10, 20, 4);
+      ctx.fillStyle = '#3a78c2'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.fillStyle = '#8893a0'; ctx.font = '9px Segoe UI';
+      ctx.textAlign = 'left'; ctx.fillText('Small', TRACK_X, ty + 22);
+      ctx.textAlign = 'right'; ctx.fillText('Large', TRACK_X + TRACK_W, ty + 22);
+    }
+  }
+
+  function drawTimeControls() {
+    const radio = (cx, cy, on, label) => {
+      ctx.beginPath(); ctx.arc(cx, cy, 7, 0, 2 * Math.PI);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = '#98a2ac'; ctx.lineWidth = 1.2; ctx.stroke();
+      if (on) {
+        ctx.beginPath(); ctx.arc(cx, cy, 3.6, 0, 2 * Math.PI);
+        ctx.fillStyle = '#3a78c2'; ctx.fill();
+      }
+      ctx.fillStyle = '#2c3540'; ctx.font = '11.5px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillText(label, cx + 12, cy + 4);
+    };
+    radio(RADIO_N.x, RADIO_N.y, !slowMode, 'Normal');
+    radio(RADIO_S.x, RADIO_S.y, slowMode, 'Slow');
+    ctx.beginPath(); ctx.arc(PAUSE.x, PAUSE.y, PAUSE.r, 0, 2 * Math.PI);
+    ctx.fillStyle = '#3a78c2'; ctx.fill();
+    ctx.strokeStyle = '#2c5f9e'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#fff';
+    if (paused) {
+      ctx.beginPath();
+      ctx.moveTo(PAUSE.x - 3.5, PAUSE.y - 6);
+      ctx.lineTo(PAUSE.x + 6.5, PAUSE.y);
+      ctx.lineTo(PAUSE.x - 3.5, PAUSE.y + 6);
+      ctx.closePath(); ctx.fill();
+    } else {
+      ctx.fillRect(PAUSE.x - 5, PAUSE.y - 6, 3.4, 12);
+      ctx.fillRect(PAUSE.x + 1.6, PAUSE.y - 6, 3.4, 12);
+    }
+  }
+
+  function drawReset() {
+    ctx.beginPath(); ctx.arc(RESET.x, RESET.y, RESET.r, 0, 2 * Math.PI);
+    ctx.fillStyle = '#e8762d'; ctx.fill();
+    ctx.strokeStyle = '#bf5a18'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Segoe UI'; ctx.textAlign = 'center';
+    ctx.fillText('↺', RESET.x, RESET.y + 6);
+  }
+
+  function draw() {
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, W, H);
+
+    drawBarAndShelf();
+    if (!hintDone) {
+      ctx.fillStyle = '#a9b6c2'; ctx.font = '12px Segoe UI'; ctx.textAlign = 'center';
+      ctx.fillText('Drag a cylinder onto a spring hook', 252, 96);
+    }
+    drawRefLines();
+    drawSpring(springs[0]);
+    drawSpring(springs[1]);
+    drawMovableLine();
+    drawRuler();
+    for (const i of massDrawOrder()) {
+      drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
+    }
+    drawSnapHighlight();
+    drawPanels();
+    drawTimeControls();
+    drawReset();
+  }
+
+  // ── Main loop ───────────────────────────────────────────────────────────
+  let lastTs = null, acc = 0;
+  function frame(ts) {
+    if (lastTs == null) lastTs = ts;
+    const dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+    if (!paused) {
+      acc += dt * (slowMode ? SLOW_FACTOR : 1);
+      if (acc > 0.25) acc = 0.25;
+      while (acc >= DT) { step(DT); acc -= DT; }
+    }
+    sync();
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  resetAll();
+  fit();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

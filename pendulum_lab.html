@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pendulum Lab</title>
+  <!-- Original AoPS interactive. Replaces the third-party "Pendulum Lab" simulation. -->
+<script>
+// EigenNode auto-height v2.4
+(function() {
+  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
+  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
+  // space inside the iframe — AoPS classroom embeds in a narrower column
+  // than the 600px content, so a horizontal scrollbar appears and steals
+  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
+  var BUFFER = 4;
+  var H_SCROLLBAR = 18;
+  var measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    // Temporarily neutralise body's height/min-height (overriding stylesheet
+    // rules with !important) so scrollHeight reflects actual content extent.
+    // Without this, patterns like body { height: 100vh } cause scrollHeight
+    // to echo the iframe's current viewport — adding BUFFER each cycle
+    // ratchets the iframe taller forever. Browser doesn't paint until this
+    // synchronous block returns, so no visible flicker.
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    // Check the documentElement only — that's the element that owns the
+    // iframe's horizontal scrollbar. Body can be narrower than the iframe
+    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
+    // 1-2px overflow that doesn't actually trigger a scrollbar.
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var h = measure();
+    if (h > 0 && Math.abs(h - last) >= 2) {
+      last = h;
+      window.parent.postMessage({ type: 'resize', height: h }, '*');
+    }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+})();
+</script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 800px; height: 500px; overflow: hidden;
+      background: #fbfcfe;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      user-select: none; -webkit-user-select: none;
+      display: flex;
+    }
+    canvas { display: block; touch-action: none; }
+    #panel {
+      width: 210px; height: 500px;
+      background: #eef2f7; border-left: 1px solid #ccd6e0;
+      display: flex; flex-direction: column; gap: 6px; padding: 7px 7px;
+      font-size: 11px; color: #2c3e50;
+    }
+    .grp {
+      background: #fff; border: 1px solid #d5dee6; border-radius: 8px;
+      padding: 5px 8px 6px; display: flex; flex-direction: column; gap: 3px;
+    }
+    .gt {
+      font-size: 9.5px; font-weight: 600; color: #8295a6;
+      text-transform: uppercase; letter-spacing: .5px;
+    }
+    .row { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .lab { width: 44px; color: #46586a; }
+    .un  { color: #7a8b9a; font-size: 10px; }
+    .val { min-width: 44px; font-weight: 600; }
+    label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+    input[type=checkbox] { margin: 0; width: 12px; height: 12px; accent-color: #3a78b5; cursor: pointer; }
+    input[type=range] { width: 100%; height: 14px; accent-color: #3a78b5; cursor: pointer; }
+    input[type=number] {
+      width: 54px; font: 600 11px 'Segoe UI', system-ui, sans-serif;
+      border: 1px solid #b8c6d2; border-radius: 4px; padding: 1px 3px; color: #2c3e50;
+    }
+    .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 1px 0 2px; }
+    .pbtn {
+      font: 600 10.5px 'Segoe UI', system-ui, sans-serif; cursor: pointer;
+      border: 1px solid #9fb2c2; border-radius: 5px; background: #f4f8fb;
+      color: #2c3e50; padding: 3px 2px;
+    }
+    .pbtn:hover { background: #e3eef7; }
+    .pbtn.on { background: #3a78b5; border-color: #2c5d8f; color: #fff; }
+    #gMystery { color: #8a5ab5; font-style: italic; padding: 1px 0 0; }
+    .ends { display: flex; justify-content: space-between; font-size: 9.5px; color: #8295a6; }
+    #resetBtn {
+      margin-top: auto;
+      font: 600 12px 'Segoe UI', system-ui, sans-serif; cursor: pointer;
+      border: 1px solid #9fb2c2; border-radius: 6px; background: #f4f8fb;
+      color: #2c3e50; padding: 5px 8px;
+    }
+    #resetBtn:hover { background: #e3eef7; }
+  </style>
+</head>
+<body>
+  <canvas id="c" width="590" height="500"></canvas>
+
+  <div id="panel">
+    <div class="grp">
+      <div class="gt">Pendulum</div>
+      <div class="row"><span class="lab">Length</span>
+        <input type="number" id="lenNum" min="0.10" max="1.00" step="0.01" value="0.70">
+        <span class="un">m</span></div>
+      <input type="range" id="lenSl" min="0.10" max="1.00" step="0.01" value="0.70">
+      <div class="row"><span class="lab">Mass</span><span class="val" id="massVal">1.00 kg</span></div>
+      <input type="range" id="massSl" min="0.1" max="1.5" step="0.05" value="1.0">
+    </div>
+
+    <div class="grp">
+      <div class="gt">Gravity</div>
+      <div class="pgrid">
+        <button class="pbtn" id="pbEarth">Earth</button>
+        <button class="pbtn" id="pbMoon">Moon</button>
+        <button class="pbtn" id="pbJupiter">Jupiter</button>
+        <button class="pbtn" id="pbX">Planet X</button>
+      </div>
+      <div id="gRows">
+        <div class="row"><span class="lab">g</span>
+          <input type="number" id="gNum" min="0.1" max="25" step="0.01" value="9.81">
+          <span class="un">m/s&sup2;</span></div>
+        <input type="range" id="gSl" min="0.1" max="25" step="0.01" value="9.81">
+      </div>
+      <div id="gMystery" style="display:none">g = ? &nbsp;(unknown)</div>
+    </div>
+
+    <div class="grp">
+      <div class="gt">Friction</div>
+      <input type="range" id="fricSl" min="0" max="100" step="1" value="0">
+      <div class="ends"><span>None</span><span>Lots</span></div>
+    </div>
+
+    <div class="grp">
+      <div class="gt">Tools</div>
+      <label><input type="checkbox" id="cbStopwatch"> Stopwatch</label>
+      <label><input type="checkbox" id="cbRuler"> Ruler</label>
+      <label><input type="checkbox" id="cbTimer"> Period timer</label>
+    </div>
+
+    <button id="resetBtn" title="Restore the initial setup">&#8634; Reset all</button>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const W = 590, H = 500;
+
+    // ── Layout constants ─────────────────────────────────────
+    const PIV = { x: 300, y: 70 };     // pivot point
+    const PX_PER_M = 340;              // 1.00 m of string = 340 px
+    const PROT_R = 140;                // protractor arc radius
+
+    // ── Physics constants ────────────────────────────────────
+    const H_SUB  = 1 / 240;            // RK4 substep (s of sim time)
+    const STEP_DT = 0.02;              // "step" button advance (s of sim time)
+    const SLOW_FACTOR = 0.25;          // slow motion rate
+    const PLANETS = { earth: 9.81, moon: 1.62, jupiter: 24.8 };
+    const FRIC_TO_B = 0.003;           // slider 0-100 -> b (kg/s), v'' damping b/m * w
+
+    // ── URL params ───────────────────────────────────────────
+    const Q = new URLSearchParams(location.search);
+    const qnum = (k, def, lo, hi) => {
+      const v = parseFloat(Q.get(k));
+      return isNaN(v) ? def : Math.min(hi, Math.max(lo, v));
+    };
+    const qflag = k => ['1', 'true', 'yes'].includes((Q.get(k) || '').toLowerCase());
+    const GX = qnum('gx', 14.2, 0.1, 25);   // hidden Planet X gravity
+
+    function initialState() {
+      let planet = (Q.get('planet') || '').toLowerCase();
+      let g;
+      if (planet === 'x') { g = GX; }
+      else if (Q.has('g')) { planet = 'custom'; g = qnum('g', 9.81, 0.1, 25); }
+      else if (planet === 'moon') { g = PLANETS.moon; }
+      else if (planet === 'jupiter') { g = PLANETS.jupiter; }
+      else { planet = 'earth'; g = PLANETS.earth; }
+      return {
+        L: qnum('length', qnum('l', 0.70, 0.1, 1.0), 0.1, 1.0),
+        m: qnum('mass', 1.0, 0.1, 1.5),
+        g, planet,
+        friction: qnum('friction', 0, 0, 100),
+        slow: qflag('slow'),
+        paused: qflag('paused'),
+        theta: qnum('angle', 0, -170, 170) * Math.PI / 180,
+        omega: 0,
+        tools: { stopwatch: qflag('stopwatch'), ruler: qflag('ruler'), timer: qflag('timer') },
+        pos: {                              // tool card top-left corners
+          stopwatch: { x: 14, y: 386 },     // lower-left, per the lesson script
+          timer:     { x: 14, y: 88 },
+          ruler:     { x: 430, y: 64 }
+        },
+        swatch: { t: 0, running: false }
+      };
+    }
+    const CLEAN = qflag('clean');           // hide hint + playback chrome for captures
+
+    // ── State ────────────────────────────────────────────────
+    let S;                 // mutable sim state
+    let simAcc = 0;        // substep accumulator
+    let hintDismissed = false;
+    // period timer measurement
+    let ptSign = 0, ptT0 = NaN, ptVal = NaN, ptSimT = 0;
+    // dragging
+    let drag = null;       // {kind:'bob'|'stopwatch'|'timer'|'ruler', dx, dy}
+    let hoverKind = null;
+    let lastMx = -1, lastMy = -1;
+
+    function resetPeriodTimer() { ptSign = 0; ptT0 = NaN; ptVal = NaN; }
+
+    // ── DOM handles ──────────────────────────────────────────
+    const $ = id => document.getElementById(id);
+    const lenNum = $('lenNum'), lenSl = $('lenSl');
+    const massSl = $('massSl'), massVal = $('massVal');
+    const gNum = $('gNum'), gSl = $('gSl'), gRows = $('gRows'), gMystery = $('gMystery');
+    const fricSl = $('fricSl');
+    const cbStopwatch = $('cbStopwatch'), cbRuler = $('cbRuler'), cbTimer = $('cbTimer');
+    const pBtns = { earth: $('pbEarth'), moon: $('pbMoon'), jupiter: $('pbJupiter'), x: $('pbX') };
+
+    function syncUI() {
+      lenNum.value = S.L.toFixed(2); lenSl.value = S.L;
+      massSl.value = S.m; massVal.textContent = S.m.toFixed(2) + ' kg';
+      fricSl.value = S.friction;
+      cbStopwatch.checked = S.tools.stopwatch;
+      cbRuler.checked = S.tools.ruler;
+      cbTimer.checked = S.tools.timer;
+      for (const k in pBtns) pBtns[k].classList.toggle('on', S.planet === k);
+      if (S.planet === 'x') {
+        gRows.style.display = 'none'; gMystery.style.display = 'block';
+      } else {
+        gRows.style.display = 'block'; gMystery.style.display = 'none';
+        gNum.value = S.g.toFixed(2); gSl.value = S.g;
+      }
+    }
+
+    function applyReset() {
+      S = initialState();
+      simAcc = 0; ptSimT = 0; drag = null;
+      resetPeriodTimer();
+      syncUI();
+    }
+    applyReset();
+
+    // ── Panel events ─────────────────────────────────────────
+    function setLength(v) {
+      if (isNaN(v)) { syncUI(); return; }
+      S.L = Math.min(1.0, Math.max(0.1, v));
+      resetPeriodTimer(); syncUI();
+    }
+    lenSl.addEventListener('input', () => setLength(parseFloat(lenSl.value)));
+    lenNum.addEventListener('change', () => setLength(parseFloat(lenNum.value)));
+    massSl.addEventListener('input', () => {
+      S.m = parseFloat(massSl.value);
+      massVal.textContent = S.m.toFixed(2) + ' kg';
+    });
+    function setGravity(v) {
+      if (isNaN(v)) { syncUI(); return; }
+      S.g = Math.min(25, Math.max(0.1, v));
+      S.planet = 'custom';
+      resetPeriodTimer(); syncUI();
+    }
+    gSl.addEventListener('input', () => setGravity(parseFloat(gSl.value)));
+    gNum.addEventListener('change', () => setGravity(parseFloat(gNum.value)));
+    for (const k in pBtns) pBtns[k].addEventListener('click', () => {
+      S.planet = k;
+      S.g = (k === 'x') ? GX : PLANETS[k];
+      resetPeriodTimer(); syncUI();
+    });
+    fricSl.addEventListener('input', () => { S.friction = parseFloat(fricSl.value); });
+    cbStopwatch.addEventListener('change', () => { S.tools.stopwatch = cbStopwatch.checked; });
+    cbRuler.addEventListener('change', () => { S.tools.ruler = cbRuler.checked; });
+    cbTimer.addEventListener('change', () => {
+      S.tools.timer = cbTimer.checked;
+      if (cbTimer.checked) resetPeriodTimer();
+    });
+    $('resetBtn').addEventListener('click', applyReset);
+
+    // ── Physics: full nonlinear pendulum, RK4 ────────────────
+    // theta'' = -(g/L) sin(theta) - (b/m) theta'
+    function deriv(th, om) {
+      return [om, -(S.g / S.L) * Math.sin(th) - (S.friction * FRIC_TO_B / S.m) * om];
+    }
+    function substep() {
+      ptSimT += H_SUB;
+      if (S.swatch.running) S.swatch.t += H_SUB;
+      if (drag && drag.kind === 'bob') return;   // bob held: dynamics frozen, clocks run
+      const h = H_SUB;
+      const pth = S.theta;
+      const k1 = deriv(S.theta, S.omega);
+      const k2 = deriv(S.theta + 0.5 * h * k1[0], S.omega + 0.5 * h * k1[1]);
+      const k3 = deriv(S.theta + 0.5 * h * k2[0], S.omega + 0.5 * h * k2[1]);
+      const k4 = deriv(S.theta + h * k3[0], S.omega + h * k3[1]);
+      S.theta += h / 6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]);
+      S.omega += h / 6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]);
+      // lowest-point pass: linear-interpolated zero crossing of theta
+      if (((pth <= 0 && S.theta > 0) || (pth >= 0 && S.theta < 0)) && Math.abs(S.omega) > 1e-4) {
+        const tc = (ptSimT - h) + h * (pth / (pth - S.theta));
+        const dir = S.omega > 0 ? 1 : -1;
+        if (S.tools.timer) {
+          if (ptSign === 0) { ptSign = dir; ptT0 = tc; }
+          else if (dir === ptSign) { ptVal = tc - ptT0; ptT0 = tc; }
+        }
+      }
+    }
+    function advance(dt) {
+      simAcc += dt;
+      // cap pathological backlogs (tab switch)
+      if (simAcc > 0.25) simAcc = 0.25;
+      while (simAcc >= H_SUB) { substep(); simAcc -= H_SUB; }
+    }
+    function stopBob() {
+      S.theta = 0; S.omega = 0;
+      resetPeriodTimer();
+    }
+
+    // ── Geometry helpers ─────────────────────────────────────
+    const bobR = () => 12 * Math.cbrt(S.m) + 4;
+    function bobXY() {
+      const Lpx = S.L * PX_PER_M;
+      return { x: PIV.x + Lpx * Math.sin(S.theta), y: PIV.y + Lpx * Math.cos(S.theta) };
+    }
+
+    // tool card sizes
+    const SW_W = 128, SW_H = 72;       // stopwatch
+    const PT_W = 132, PT_H = 58;       // period timer
+    const RU_W = 36,  RU_H = 354;      // ruler (100 cm at 3.4 px/cm + margins)
+
+    // on-canvas playback cluster geometry
+    const CL = {
+      stop:   { x: 124, y: 461, w: 84, h: 27 },
+      rNorm:  { cx: 243, cy: 474, r: 7 },
+      rSlow:  { cx: 318, cy: 474, r: 7 },
+      pause:  { cx: 432, cy: 474, r: 15 },
+      step:   { cx: 467, cy: 474, r: 11 }
+    };
+    // stopwatch sub-buttons (relative to card)
+    const SW_BTN_GO  = { x: 8,  y: 42, w: 60, h: 22 };
+    const SW_BTN_RST = { x: 74, y: 42, w: 46, h: 22 };
+
+    // ── Drawing ──────────────────────────────────────────────
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function drawMount() {
+      // hatched anchor block + bar
+      const bx = PIV.x - 85, bw = 170, by = 42, bh = 14;
+      ctx.fillStyle = '#9fb0c0';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = '#7c8e9e'; ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+      // hatching above the bar
+      ctx.save();
+      ctx.beginPath(); ctx.rect(bx, by - 9, bw, 9); ctx.clip();
+      ctx.strokeStyle = '#b6c4d1'; ctx.lineWidth = 1.5;
+      for (let x = bx - 10; x < bx + bw + 10; x += 9) {
+        ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x + 9, by - 10); ctx.stroke();
+      }
+      ctx.restore();
+      // bracket
+      ctx.beginPath();
+      ctx.moveTo(PIV.x - 12, by + bh); ctx.lineTo(PIV.x, PIV.y + 3); ctx.lineTo(PIV.x + 12, by + bh);
+      ctx.closePath();
+      ctx.fillStyle = '#8a99a8'; ctx.fill();
+      // pivot pin
+      ctx.beginPath(); ctx.arc(PIV.x, PIV.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#54616d'; ctx.fill();
+      ctx.strokeStyle = '#39434c'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    function drawProtractor() {
+      const degNow = S.theta * 180 / Math.PI;
+      ctx.save();
+      // sector highlight from vertical to current angle
+      ctx.beginPath();
+      ctx.moveTo(PIV.x, PIV.y);
+      ctx.arc(PIV.x, PIV.y, PROT_R, Math.PI / 2, Math.PI / 2 - S.theta, S.theta > 0);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(76,141,201,0.13)'; ctx.fill();
+      // arc
+      ctx.beginPath();
+      ctx.arc(PIV.x, PIV.y, PROT_R, Math.PI / 2 - Math.PI / 2, Math.PI / 2 + Math.PI / 2);
+      ctx.strokeStyle = 'rgba(60,90,120,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+      // ticks every 5 deg, labels every 15 deg
+      ctx.fillStyle = '#5a7187'; ctx.font = '9px Segoe UI';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let a = -90; a <= 90; a += 5) {
+        const rad = a * Math.PI / 180;
+        const sx = Math.sin(rad), cy = Math.cos(rad);
+        const len = (a % 45 === 0) ? 11 : (a % 15 === 0) ? 9 : 5.5;
+        ctx.beginPath();
+        ctx.moveTo(PIV.x + (PROT_R - len) * sx, PIV.y + (PROT_R - len) * cy);
+        ctx.lineTo(PIV.x + PROT_R * sx, PIV.y + PROT_R * cy);
+        ctx.strokeStyle = 'rgba(60,90,120,0.55)';
+        ctx.lineWidth = (a % 15 === 0) ? 1.3 : 1;
+        ctx.stroke();
+        if (a % 15 === 0) {
+          ctx.fillText(String(Math.abs(a)) + '°',
+            PIV.x + (PROT_R + 13) * sx, PIV.y + (PROT_R + 13) * cy);
+        }
+      }
+      // current-angle ray
+      ctx.beginPath();
+      ctx.moveTo(PIV.x, PIV.y);
+      ctx.lineTo(PIV.x + PROT_R * Math.sin(S.theta), PIV.y + PROT_R * Math.cos(S.theta));
+      ctx.strokeStyle = '#2f6fae'; ctx.lineWidth = 1.4; ctx.stroke();
+      // readout
+      ctx.font = 'bold 15px Segoe UI'; ctx.fillStyle = '#1a4a7a';
+      ctx.fillText((degNow >= 0 ? '' : '−') + Math.abs(degNow).toFixed(1) + '°',
+        PIV.x, PIV.y + PROT_R + 34);
+      ctx.restore();
+    }
+
+    function drawPendulum() {
+      const b = bobXY(), r = bobR();
+      // dashed vertical reference
+      ctx.save();
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = 'rgba(40,60,80,0.22)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(PIV.x, PIV.y);
+      ctx.lineTo(PIV.x, PIV.y + S.L * PX_PER_M + 26);
+      ctx.stroke();
+      ctx.restore();
+      // string
+      ctx.beginPath();
+      ctx.moveTo(PIV.x, PIV.y); ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = '#5c6a76'; ctx.lineWidth = 1.7; ctx.stroke();
+      // bob (round, steel-blue, original art)
+      const hl = (hoverKind === 'bob' || (drag && drag.kind === 'bob'));
+      const grad = ctx.createRadialGradient(b.x - r * 0.35, b.y - r * 0.4, r * 0.15, b.x, b.y, r);
+      grad.addColorStop(0, hl ? '#9cc4ea' : '#8ab4dd');
+      grad.addColorStop(0.55, hl ? '#4d86c2' : '#3b6fb5');
+      grad.addColorStop(1, hl ? '#27517f' : '#1d3f6e');
+      ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = grad; ctx.fill();
+      ctx.strokeStyle = '#16314f'; ctx.lineWidth = hl ? 2 : 1.2; ctx.stroke();
+      // specular dot
+      ctx.beginPath(); ctx.arc(b.x - r * 0.32, b.y - r * 0.38, r * 0.16, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.fill();
+    }
+
+    function drawRuler() {
+      if (!S.tools.ruler) return;
+      const p = S.pos.ruler;
+      ctx.save();
+      roundRect(p.x, p.y, RU_W, RU_H, 4);
+      ctx.fillStyle = 'rgba(246,228,160,0.88)'; ctx.fill();
+      ctx.strokeStyle = '#b39b4e'; ctx.lineWidth = 1.2; ctx.stroke();
+      const x0 = p.x, y0 = p.y + 7;          // y of the 0 cm mark
+      ctx.strokeStyle = '#6e5a1e'; ctx.fillStyle = '#6e5a1e';
+      ctx.font = '8.5px Segoe UI'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      for (let cm = 0; cm <= 100; cm++) {
+        const y = y0 + cm * 3.4;
+        const len = (cm % 10 === 0) ? 13 : (cm % 5 === 0) ? 9 : 5;
+        ctx.lineWidth = (cm % 10 === 0) ? 1.2 : 0.7;
+        ctx.beginPath(); ctx.moveTo(x0 + 1, y); ctx.lineTo(x0 + 1 + len, y); ctx.stroke();
+        if (cm % 10 === 0 && cm > 0) ctx.fillText(String(cm), x0 + 16, y);
+      }
+      ctx.font = 'bold 8.5px Segoe UI';
+      ctx.fillText('cm', x0 + 17, y0);
+      ctx.restore();
+    }
+
+    function drawStopwatch() {
+      if (!S.tools.stopwatch) return;
+      const p = S.pos.stopwatch;
+      ctx.save();
+      roundRect(p.x, p.y, SW_W, SW_H, 9);
+      ctx.fillStyle = '#ffffff'; ctx.fill();
+      ctx.strokeStyle = '#3a78b5'; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.fillStyle = '#8295a6'; ctx.font = '600 9px Segoe UI';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText('STOPWATCH', p.x + 9, p.y + 13);
+      // digits
+      ctx.fillStyle = '#13283c'; ctx.font = '600 21px Consolas, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(S.swatch.t.toFixed(2), p.x + SW_W - 26, p.y + 35);
+      ctx.font = '600 11px Segoe UI'; ctx.fillStyle = '#7a8b9a';
+      ctx.fillText('s', p.x + SW_W - 12, p.y + 35);
+      // start/stop button
+      const g = SW_BTN_GO, rr = SW_BTN_RST;
+      roundRect(p.x + g.x, p.y + g.y, g.w, g.h, 5);
+      ctx.fillStyle = S.swatch.running ? '#fbe3e3' : '#e6f4e6'; ctx.fill();
+      ctx.strokeStyle = S.swatch.running ? '#c06060' : '#76a876'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = S.swatch.running ? '#8d2f2f' : '#1d5c1d';
+      ctx.font = '600 11px Segoe UI'; ctx.textAlign = 'center';
+      ctx.fillText(S.swatch.running ? 'Stop' : 'Start', p.x + g.x + g.w / 2, p.y + g.y + 15);
+      // reset button
+      roundRect(p.x + rr.x, p.y + rr.y, rr.w, rr.h, 5);
+      ctx.fillStyle = '#f4f8fb'; ctx.fill();
+      ctx.strokeStyle = '#9fb2c2'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = '#2c3e50';
+      ctx.fillText('Reset', p.x + rr.x + rr.w / 2, p.y + rr.y + 15);
+      ctx.restore();
+    }
+
+    function drawPeriodTimer() {
+      if (!S.tools.timer) return;
+      const p = S.pos.timer;
+      ctx.save();
+      roundRect(p.x, p.y, PT_W, PT_H, 9);
+      ctx.fillStyle = '#ffffff'; ctx.fill();
+      ctx.strokeStyle = '#7a5ab5'; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.fillStyle = '#8295a6'; ctx.font = '600 9px Segoe UI';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText('PERIOD', p.x + 9, p.y + 13);
+      ctx.textAlign = 'center'; ctx.fillStyle = '#2d1d54';
+      ctx.font = '600 20px Consolas, monospace';
+      if (!isNaN(ptVal)) {
+        ctx.fillText(ptVal.toFixed(3) + ' s', p.x + PT_W / 2, p.y + 40);
+      } else if (ptSign !== 0) {
+        ctx.font = 'italic 12px Segoe UI'; ctx.fillStyle = '#8a7ab0';
+        ctx.fillText('measuring…', p.x + PT_W / 2, p.y + 38);
+      } else {
+        ctx.fillStyle = '#b3a8cf';
+        ctx.fillText('—', p.x + PT_W / 2, p.y + 40);
+      }
+      ctx.restore();
+    }
+
+    function drawCluster() {
+      if (CLEAN) return;
+      ctx.save();
+      ctx.textBaseline = 'middle';
+      // stop-bob button
+      const sb = CL.stop;
+      const sbHover = hoverKind === 'btnStop';
+      roundRect(sb.x, sb.y, sb.w, sb.h, 6);
+      ctx.fillStyle = sbHover ? '#fdeaea' : '#fbf2f2'; ctx.fill();
+      ctx.strokeStyle = '#c98787'; ctx.lineWidth = 1.1; ctx.stroke();
+      ctx.fillStyle = '#a23b3b';
+      ctx.fillRect(sb.x + 10, sb.y + 9, 9, 9);
+      ctx.font = '600 11px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillStyle = '#7c2d2d';
+      ctx.fillText('Stop bob', sb.x + 25, sb.y + sb.h / 2 + 0.5);
+      // speed radios
+      const radio = (r, on, label) => {
+        ctx.beginPath(); ctx.arc(r.cx, r.cy, r.r, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff'; ctx.fill();
+        ctx.strokeStyle = '#5a7187'; ctx.lineWidth = 1.2; ctx.stroke();
+        if (on) {
+          ctx.beginPath(); ctx.arc(r.cx, r.cy, r.r - 3.2, 0, Math.PI * 2);
+          ctx.fillStyle = '#3a78b5'; ctx.fill();
+        }
+        ctx.fillStyle = '#46586a'; ctx.font = '11px Segoe UI'; ctx.textAlign = 'left';
+        ctx.fillText(label, r.cx + r.r + 4, r.cy + 0.5);
+      };
+      radio(CL.rNorm, !S.slow, 'Normal');
+      radio(CL.rSlow, S.slow, 'Slow motion');
+      // pause / play
+      const pb = CL.pause;
+      ctx.beginPath(); ctx.arc(pb.cx, pb.cy, pb.r, 0, Math.PI * 2);
+      ctx.fillStyle = hoverKind === 'btnPause' ? '#dcebf8' : '#e9f2fa'; ctx.fill();
+      ctx.strokeStyle = '#3a78b5'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#1a4a7a';
+      if (S.paused) {        // play triangle
+        ctx.beginPath();
+        ctx.moveTo(pb.cx - 4, pb.cy - 6.5);
+        ctx.lineTo(pb.cx + 7, pb.cy);
+        ctx.lineTo(pb.cx - 4, pb.cy + 6.5);
+        ctx.closePath(); ctx.fill();
+      } else {               // pause bars
+        ctx.fillRect(pb.cx - 5.5, pb.cy - 6, 4, 12);
+        ctx.fillRect(pb.cx + 1.5, pb.cy - 6, 4, 12);
+      }
+      // step
+      const st = CL.step;
+      ctx.beginPath(); ctx.arc(st.cx, st.cy, st.r, 0, Math.PI * 2);
+      ctx.fillStyle = hoverKind === 'btnStep' ? '#dcebf8' : '#eef4fa'; ctx.fill();
+      ctx.strokeStyle = '#6e94b5'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.fillStyle = '#1a4a7a';
+      ctx.beginPath();
+      ctx.moveTo(st.cx - 5, st.cy - 4.5);
+      ctx.lineTo(st.cx + 1.5, st.cy);
+      ctx.lineTo(st.cx - 5, st.cy + 4.5);
+      ctx.closePath(); ctx.fill();
+      ctx.fillRect(st.cx + 3, st.cy - 4.5, 2, 9);
+      ctx.restore();
+    }
+
+    function draw() {
+      // background
+      const bg = ctx.createLinearGradient(0, 0, 0, H);
+      bg.addColorStop(0, '#eaf3fb'); bg.addColorStop(1, '#fbfcfe');
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+      drawMount();
+      if (drag && drag.kind === 'bob') drawProtractor();
+      drawPendulum();
+
+      if (!hintDismissed && !CLEAN && Math.abs(S.theta) < 1e-6 && Math.abs(S.omega) < 1e-6) {
+        ctx.fillStyle = '#9fb3c8'; ctx.font = '12px Segoe UI';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+        ctx.fillText('Drag the bob to the side, then let go', PIV.x, 175);
+      }
+
+      drawRuler();
+      drawPeriodTimer();
+      drawStopwatch();
+      drawCluster();
+    }
+
+    // ── Animation loop ───────────────────────────────────────
+    let lastTs = null;
+    function frame(ts) {
+      if (lastTs === null) lastTs = ts;
+      const dtReal = Math.min((ts - lastTs) / 1000, 0.05);
+      lastTs = ts;
+      if (!S.paused) advance(dtReal * (S.slow ? SLOW_FACTOR : 1));
+      draw();
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    // ── Pointer interaction ──────────────────────────────────
+    const cpos = e => {
+      const r = canvas.getBoundingClientRect();
+      return [e.clientX - r.left, e.clientY - r.top];
+    };
+    const inRect = (mx, my, x, y, w, h) => mx >= x && mx <= x + w && my >= y && my <= y + h;
+    const inCircle = (mx, my, c) => Math.hypot(mx - c.cx, my - c.cy) <= c.r + 2;
+
+    function hitTest(mx, my) {
+      // playback cluster (topmost)
+      if (!CLEAN) {
+        if (inRect(mx, my, CL.stop.x, CL.stop.y, CL.stop.w, CL.stop.h)) return 'btnStop';
+        if (inCircle(mx, my, CL.pause)) return 'btnPause';
+        if (inCircle(mx, my, CL.step)) return 'btnStep';
+        if (Math.hypot(mx - CL.rNorm.cx, my - CL.rNorm.cy) < 9 ||
+            (mx > CL.rNorm.cx && mx < CL.rNorm.cx + 56 && Math.abs(my - CL.rNorm.cy) < 9)) return 'btnNorm';
+        if (Math.hypot(mx - CL.rSlow.cx, my - CL.rSlow.cy) < 9 ||
+            (mx > CL.rSlow.cx && mx < CL.rSlow.cx + 88 && Math.abs(my - CL.rSlow.cy) < 9)) return 'btnSlow';
+      }
+      // stopwatch buttons, then card
+      if (S.tools.stopwatch) {
+        const p = S.pos.stopwatch;
+        if (inRect(mx, my, p.x + SW_BTN_GO.x, p.y + SW_BTN_GO.y, SW_BTN_GO.w, SW_BTN_GO.h)) return 'swGo';
+        if (inRect(mx, my, p.x + SW_BTN_RST.x, p.y + SW_BTN_RST.y, SW_BTN_RST.w, SW_BTN_RST.h)) return 'swRst';
+        if (inRect(mx, my, p.x, p.y, SW_W, SW_H)) return 'stopwatch';
+      }
+      if (S.tools.timer && inRect(mx, my, S.pos.timer.x, S.pos.timer.y, PT_W, PT_H)) return 'timer';
+      if (S.tools.ruler && inRect(mx, my, S.pos.ruler.x, S.pos.ruler.y, RU_W, RU_H)) return 'ruler';
+      // bob
+      const b = bobXY();
+      if (Math.hypot(mx - b.x, my - b.y) <= Math.max(bobR() + 10, 22)) return 'bob';
+      return null;
+    }
+
+    function dragBobTo(mx, my) {
+      const rawDeg = Math.atan2(mx - PIV.x, my - PIV.y) * 180 / Math.PI;
+      let deg = Math.round(rawDeg * 2) / 2;           // snap to 0.5 deg
+      deg = Math.max(-170, Math.min(170, deg));
+      S.theta = deg * Math.PI / 180;
+      S.omega = 0;
+    }
+
+    canvas.addEventListener('pointerdown', e => {
+      const [mx, my] = cpos(e);
+      const hit = hitTest(mx, my);
+      switch (hit) {
+        case 'btnStop':  stopBob(); break;
+        case 'btnPause': S.paused = !S.paused; break;
+        case 'btnStep':  S.paused = true; advance(STEP_DT); break;
+        case 'btnNorm':  S.slow = false; break;
+        case 'btnSlow':  S.slow = true; break;
+        case 'swGo':     S.swatch.running = !S.swatch.running; break;
+        case 'swRst':    S.swatch.t = 0; S.swatch.running = false; break;
+        case 'stopwatch': case 'timer': case 'ruler': {
+          const p = S.pos[hit];
+          drag = { kind: hit, dx: mx - p.x, dy: my - p.y };
+          canvas.setPointerCapture(e.pointerId);
+          break;
+        }
+        case 'bob': {
+          drag = { kind: 'bob' };
+          hintDismissed = true;
+          dragBobTo(mx, my);
+          resetPeriodTimer();
+          canvas.setPointerCapture(e.pointerId);
+          break;
+        }
+      }
+    });
+
+    canvas.addEventListener('pointermove', e => {
+      const [mx, my] = cpos(e);
+      lastMx = mx; lastMy = my;
+      if (drag) {
+        if (drag.kind === 'bob') {
+          dragBobTo(mx, my);
+        } else {
+          const lim = { stopwatch: [SW_W, SW_H], timer: [PT_W, PT_H], ruler: [RU_W, RU_H] }[drag.kind];
+          S.pos[drag.kind].x = Math.max(2, Math.min(W - lim[0] - 2, mx - drag.dx));
+          S.pos[drag.kind].y = Math.max(2, Math.min(H - lim[1] - 2, my - drag.dy));
+        }
+        canvas.style.cursor = 'grabbing';
+        return;
+      }
+      hoverKind = hitTest(mx, my);
+      canvas.style.cursor =
+        hoverKind === null ? 'default' :
+        ['bob', 'stopwatch', 'timer', 'ruler'].includes(hoverKind) ? 'grab' : 'pointer';
+    });
+
+    function endDrag() {
+      if (drag && drag.kind === 'bob') {
+        S.omega = 0;
+        if (Math.abs(S.theta) < 0.0044) S.theta = 0;   // < 0.25 deg: settle to rest
+        resetPeriodTimer();
+      }
+      drag = null;
+    }
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+    canvas.addEventListener('pointerleave', () => { if (!drag) hoverKind = null; });
+
+  })();
+  </script>
+</body>
+</html>

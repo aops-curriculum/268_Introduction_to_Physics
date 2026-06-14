@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Circuit Lab</title>
+  <!-- Original AoPS interactive. Replaces the third-party "Circuit Construction Kit: DC - Virtual Lab" simulation. -->
+  <!--
+    URL parameters:
+      ?preset=blank        empty board (default — students build from the tray)
+      ?preset=bulb_circuit battery (9.0 V) + light bulb + switch prewired in a loop
+      &volts=0..120        battery EMF for the preset battery (default 9)
+      &switch=open|closed  initial switch state for bulb_circuit (default closed)
+      &labels=0|1          show part name labels (default 1)
+      &values=0|1          show part values, e.g. "9.0 V", "10 Ω" (default 0)
+    Physics: bulb fixed at 10 Ω (ohmic) so I = U/10 — e.g. 120.0 V -> 12.00 A,
+    9.0 V -> 0.90 A. Wires are 1e-6 Ω regardless of length; battery internal
+    resistance 1e-4 Ω; fire when a part carries more than 15 A.
+  -->
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 800px; height: 500px; overflow: hidden;
+      background: #f5f5f5; position: relative;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+    canvas { display: block; touch-action: none; }
+    #bar {
+      width: 800px; height: 45px; display: flex; align-items: center;
+      gap: 16px; padding: 0 12px; font-size: 13px; color: #334455;
+      background: #f5f5f5; border-top: 1px solid #e0e4e8;
+    }
+    #bar label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+    #hint2 { flex: 1; text-align: center; color: #9fb0c0; font-size: 12px; }
+    #resetBtn {
+      padding: 5px 14px; border: 1px solid #b8c4d0; border-radius: 6px;
+      background: #fff; color: #334455; font-size: 13px; cursor: pointer;
+      font-family: inherit;
+    }
+    #resetBtn:hover { background: #eef4fb; }
+    #pop {
+      position: absolute; display: none; width: 240px; background: #fff;
+      border: 1px solid #9aa8b8; border-radius: 9px;
+      box-shadow: 0 5px 16px rgba(20,40,70,0.22);
+      padding: 9px 11px 10px; font-size: 12.5px; color: #334455; z-index: 9;
+    }
+    #pop .t { font-weight: 600; font-size: 13px; margin-bottom: 6px; color: #2c3a4a; }
+    #pop .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    #pop .row2 { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
+    #pop input[type=range] { flex: 1; }
+    #pop .nud {
+      width: 24px; height: 22px; border: 1px solid #b8c4d0; border-radius: 5px;
+      background: #f6f9fc; cursor: pointer; font-size: 13px; line-height: 1;
+    }
+    #pop .row3 { display: flex; gap: 8px; justify-content: flex-end; }
+    #pop button.act {
+      padding: 4px 10px; border-radius: 5px; border: 1px solid #b8c4d0;
+      background: #fff; cursor: pointer; font-size: 12px; font-family: inherit;
+    }
+    #pop button.rmb { color: #b03030; border-color: #d8b0b0; }
+    #pop button.rmb:hover { background: #fbeeee; }
+    #pop button.act:hover { background: #eef4fb; }
+    #pop .note { color: #6b7b8b; margin-bottom: 7px; }
+  </style>
+<script>
+// EigenNode auto-height v2.4
+(function() {
+  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
+  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
+  // space inside the iframe — AoPS classroom embeds in a narrower column
+  // than the 600px content, so a horizontal scrollbar appears and steals
+  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
+  var BUFFER = 4;
+  var H_SCROLLBAR = 18;
+  var measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    // Temporarily neutralise body's height/min-height (overriding stylesheet
+    // rules with !important) so scrollHeight reflects actual content extent.
+    // Without this, patterns like body { height: 100vh } cause scrollHeight
+    // to echo the iframe's current viewport — adding BUFFER each cycle
+    // ratchets the iframe taller forever. Browser doesn't paint until this
+    // synchronous block returns, so no visible flicker.
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    // Check the documentElement only — that's the element that owns the
+    // iframe's horizontal scrollbar. Body can be narrower than the iframe
+    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
+    // 1-2px overflow that doesn't actually trigger a scrollbar.
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var h = measure();
+    if (h > 0 && Math.abs(h - last) >= 2) {
+      last = h;
+      window.parent.postMessage({ type: 'resize', height: h }, '*');
+    }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+})();
+</script>
+</head>
+<body>
+  <canvas id="c" width="800" height="455"></canvas>
+  <div id="bar">
+    <label><input type="checkbox" id="cbLabels"> Labels</label>
+    <label><input type="checkbox" id="cbValues"> Values</label>
+    <span id="hint2">Click a battery to set its voltage &middot; click a switch to open or close it &middot; click a junction to disconnect</span>
+    <button id="resetBtn">&#8634; Reset</button>
+  </div>
+  <div id="pop"></div>
+  <script>
+  (() => {
+    'use strict';
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const W = 800, H = 455, TRAY_W = 96;
+    const SNAP = 18;                 // px: junction snap radius
+    const R_WIRE = 1e-6;             // ohms per wire, regardless of length
+    const R_SWITCH = 1e-6, R_AMMETER = 1e-6;
+    const R_OPEN = 1e7;              // open switch: 10 MΩ (reads 0.00 A; voltmeter sees the EMF)
+    const R_BULB = 10;               // the lesson's bulb: 10 ohms, ohmic
+    const R_INTERNAL = 1e-4;         // battery internal resistance
+    const FIRE_AMPS = 15;            // fire above this current (12 A at 120 V stays safe)
+    const E_SPACING = 26;            // px between electron dots
+    const E_SPEED = 28;              // px/s per amp (speed proportional to I)
+    const E_SPEED_MAX = 200;         // px/s cap
+    const MAX_PARTS = 40;
+    const TAU = Math.PI * 2;
+
+    // ── URL params ───────────────────────────────────────────
+    const Q = {};
+    location.search.replace(/^\?/, '').split('&').forEach(kv => {
+      if (!kv) return;
+      const i = kv.indexOf('=');
+      if (i < 0) Q[decodeURIComponent(kv)] = '';
+      else Q[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+    });
+
+    const DEFS = {
+      wire:     { name: 'Wire',       len: 90  },
+      battery:  { name: 'Battery',    len: 104, rigid: true },
+      bulb:     { name: 'Light Bulb', len: 64,  rigid: true },
+      sw:       { name: 'Switch',     len: 88,  rigid: true },
+      resistor: { name: 'Resistor',   len: 92,  rigid: true },
+      ammeter:  { name: 'Ammeter',    len: 96,  rigid: true },
+    };
+
+    // ── State ────────────────────────────────────────────────
+    let parts = [], junctions = [], nextId = 1;
+    let volt = null;            // voltmeter tool
+    let labelsOn = true, valuesOn = false;
+    let drag = null, mouse = { x: -100, y: -100 };
+    let dirty = true, animT = 0;
+    const markDirty = () => { dirty = true; };
+
+    // ── Topology ─────────────────────────────────────────────
+    function newJunction(x, y) {
+      const j = { id: nextId++, x, y, terms: [], v: 0, net: -1 };
+      junctions.push(j);
+      return j;
+    }
+    function addPart(type, x0, y0, x1, y1, opts) {
+      const p = Object.assign({
+        id: nextId++, type, rigid: !!DEFS[type].rigid,
+        volts: 9.0, ohms: 10, closed: false, lev: 0, I: 0, eoff: 0,
+      }, opts || {});
+      p.lev = p.closed ? 0 : -0.6;
+      p.j = [newJunction(x0, y0), newJunction(x1, y1)];
+      p.j[0].terms.push([p, 0]);
+      p.j[1].terms.push([p, 1]);
+      parts.push(p);
+      markDirty();
+      return p;
+    }
+    function removeJunctionIfEmpty(j) {
+      if (!j.terms.length) {
+        const i = junctions.indexOf(j);
+        if (i >= 0) junctions.splice(i, 1);
+      }
+    }
+    function mergeJunctions(keep, lose) {
+      if (keep === lose) return;
+      // refuse if some part would end up with both terminals on one junction
+      for (const [p] of lose.terms)
+        if (p.j[0] === keep || p.j[1] === keep) return;
+      for (const [p, k] of lose.terms) {
+        p.j[k] = keep;
+        keep.terms.push([p, k]);
+      }
+      lose.terms.length = 0;
+      removeJunctionIfEmpty(lose);
+      markDirty();
+    }
+    function detachTerm(p, k) {
+      const j = p.j[k];
+      if (j.terms.length < 2) return j;
+      j.terms.splice(j.terms.findIndex(t => t[0] === p && t[1] === k), 1);
+      const nj = newJunction(j.x, j.y);
+      nj.terms.push([p, k]);
+      p.j[k] = nj;
+      markDirty();
+      return nj;
+    }
+    function deletePart(p) {
+      for (let k = 0; k < 2; k++) {
+        const j = p.j[k];
+        j.terms.splice(j.terms.findIndex(t => t[0] === p), 1);
+        removeJunctionIfEmpty(j);
+      }
+      parts.splice(parts.indexOf(p), 1);
+      closePopup();
+      markDirty();
+    }
+    function splitJunction(j) {
+      if (j.terms.length < 2) return;
+      const terms = j.terms.slice();
+      for (let i = 1; i < terms.length; i++) {
+        const [p, k] = terms[i];
+        const nj = detachTerm(p, k);
+        const o = p.j[1 - k];
+        let ux = o.x - nj.x, uy = o.y - nj.y;
+        const dd = Math.hypot(ux, uy) || 1;
+        ux /= dd; uy /= dd;
+        if (p.rigid) translateJs(moveGroupSeeds([nj]), ux * 16, uy * 16);
+        else { nj.x += ux * 16; nj.y += uy * 16; }
+      }
+      closePopup();
+      markDirty();
+    }
+
+    // movement group: expand seed junctions through rigid parts
+    function moveGroupSeeds(seedJs) {
+      const set = new Set(seedJs), stack = [...seedJs];
+      while (stack.length) {
+        const j = stack.pop();
+        for (const [p] of j.terms) {
+          if (!p.rigid) continue;
+          for (const oj of p.j)
+            if (!set.has(oj)) { set.add(oj); stack.push(oj); }
+        }
+      }
+      return set;
+    }
+    function translateJs(set, dx, dy) {
+      for (const j of set) { j.x += dx; j.y += dy; }
+    }
+    function clampDelta(set, dx, dy, minX) {
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const j of set) {
+        x0 = Math.min(x0, j.x); x1 = Math.max(x1, j.x);
+        y0 = Math.min(y0, j.y); y1 = Math.max(y1, j.y);
+      }
+      dx = Math.max(dx, minX - x0); dx = Math.min(dx, (W - 10) - x1);
+      dy = Math.max(dy, 10 - y0);  dy = Math.min(dy, (H - 10) - y1);
+      return [dx, dy];
+    }
+    function snapTarget(j, exclPart) {
+      let best = null, bd = SNAP;
+      for (const t of junctions) {
+        if (t === j) continue;
+        if (exclPart && (t === exclPart.j[0] || t === exclPart.j[1])) continue;
+        let spans = false;
+        for (const [p] of j.terms)
+          if (p.j[0] === t || p.j[1] === t) { spans = true; break; }
+        if (spans) continue;
+        const d = Math.hypot(t.x - j.x, t.y - j.y);
+        if (d < bd) { bd = d; best = t; }
+      }
+      return best;
+    }
+    function snapTermTo(p, k, tgt) {
+      const j = p.j[k];
+      if (p.rigid) {
+        const set = moveGroupSeeds([j]);
+        if (!set.has(tgt)) translateJs(set, tgt.x - j.x, tgt.y - j.y);
+        else { j.x = tgt.x; j.y = tgt.y; }
+      } else { j.x = tgt.x; j.y = tgt.y; }
+      mergeJunctions(tgt, j);
+    }
+
+    // ── Ammeter splice: drop onto a wire to insert it in-line ─
+    function mid(p) {
+      return { x: (p.j[0].x + p.j[1].x) / 2, y: (p.j[0].y + p.j[1].y) / 2 };
+    }
+    function plen(p) {
+      return Math.hypot(p.j[1].x - p.j[0].x, p.j[1].y - p.j[0].y);
+    }
+    function trySplice(am) {
+      if (am.j[0].terms.length > 1 || am.j[1].terms.length > 1) return null;
+      const c = mid(am);
+      let best = null, bd = 18;
+      for (const w of parts) {
+        if (w.type !== 'wire') continue;
+        const L = plen(w);
+        if (L < 112) continue;
+        const a = w.j[0], b = w.j[1];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        let t = ((c.x - a.x) * dx + (c.y - a.y) * dy) / (L * L);
+        if (t < 0.1 || t > 0.9) continue;
+        const d = Math.hypot(c.x - (a.x + dx * t), c.y - (a.y + dy * t));
+        if (d < bd) { bd = d; best = { w, t }; }
+      }
+      return best;
+    }
+    function doSplice(am, hit) {
+      const w = hit.w, a = w.j[0], b = w.j[1];
+      const L = plen(w);
+      const ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+      const half = DEFS.ammeter.len / 2;
+      const t = Math.max(half + 8, Math.min(L - half - 8, hit.t * L));
+      const cx = a.x + ux * t, cy = a.y + uy * t;
+      am.j[0].x = cx - ux * half; am.j[0].y = cy - uy * half;
+      am.j[1].x = cx + ux * half; am.j[1].y = cy + uy * half;
+      // re-route the wire's far end into the ammeter's first terminal
+      b.terms.splice(b.terms.findIndex(tm => tm[0] === w && tm[1] === 1), 1);
+      w.j[1] = am.j[0];
+      am.j[0].terms.push([w, 1]);
+      // new wire from the ammeter's second terminal to the old junction
+      const w2 = {
+        id: nextId++, type: 'wire', rigid: false,
+        volts: 9, ohms: 10, closed: false, lev: 0, I: 0, eoff: 0,
+        j: [am.j[1], b],
+      };
+      am.j[1].terms.push([w2, 0]);
+      b.terms.push([w2, 1]);
+      parts.push(w2);
+      markDirty();
+    }
+
+    // ── Circuit solver: modified nodal analysis ──────────────
+    function resistanceOf(p) {
+      switch (p.type) {
+        case 'wire':     return R_WIRE;
+        case 'bulb':     return R_BULB;
+        case 'resistor': return Math.max(0.1, p.ohms);
+        case 'ammeter':  return R_AMMETER;
+        case 'sw':       return p.closed ? R_SWITCH : R_OPEN;
+        default:         return null;   // battery handled separately
+      }
+    }
+    function gauss(A, m) {
+      for (let col = 0; col < m; col++) {
+        let piv = col;
+        for (let r = col + 1; r < m; r++)
+          if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
+        if (Math.abs(A[piv][col]) < 1e-12) return null;
+        if (piv !== col) { const t = A[piv]; A[piv] = A[col]; A[col] = t; }
+        const d = A[col][col];
+        for (let c = col; c <= m; c++) A[col][c] /= d;
+        for (let r = 0; r < m; r++) {
+          if (r === col) continue;
+          const f = A[r][col];
+          if (!f) continue;
+          for (let c = col; c <= m; c++) A[r][c] -= f * A[col][c];
+        }
+      }
+      return A.map(row => row[m]);
+    }
+    function solve() {
+      dirty = false;
+      for (const j of junctions) { j.v = 0; j.net = -1; }
+      for (const p of parts) p.I = 0;
+      // connected networks (an open switch still links its junctions via R_OPEN)
+      let nets = 0;
+      for (const j0 of junctions) {
+        if (j0.net >= 0) continue;
+        const stack = [j0];
+        j0.net = nets;
+        while (stack.length) {
+          const cur = stack.pop();
+          for (const [p] of cur.terms) {
+            for (const oj of p.j)
+              if (oj.net < 0) { oj.net = nets; stack.push(oj); }
+          }
+        }
+        nets++;
+      }
+      for (let n = 0; n < nets; n++) {
+        const js = junctions.filter(j => j.net === n);
+        const bats = parts.filter(p => p.type === 'battery' && p.j[0].net === n);
+        if (!bats.length || js.length < 2) continue;
+        const idx = new Map();
+        js.forEach((j, i) => idx.set(j, i - 1));   // first junction = reference
+        const nv = js.length - 1, m = nv + bats.length;
+        const A = [];
+        for (let i = 0; i < m; i++) A.push(new Float64Array(m + 1));
+        const st = (r, c, val) => { if (r >= 0 && c >= 0) A[r][c] += val; };
+        for (const p of parts) {
+          if (p.type === 'battery' || p.j[0].net !== n) continue;
+          const R = resistanceOf(p);
+          if (R == null) continue;
+          const g = 1 / R, a = idx.get(p.j[0]), b = idx.get(p.j[1]);
+          st(a, a, g); st(b, b, g); st(a, b, -g); st(b, a, -g);
+        }
+        bats.forEach((p, k) => {
+          const r = nv + k;
+          const a = idx.get(p.j[0]);   // negative (black) terminal
+          const b = idx.get(p.j[1]);   // positive (tan) terminal
+          // KCL columns: source current i flows inside from neg to pos
+          if (a >= 0) A[a][r] += 1;
+          if (b >= 0) A[b][r] -= 1;
+          // source row: v_pos - v_neg + r_int * i = EMF
+          if (b >= 0) A[r][b] += 1;
+          if (a >= 0) A[r][a] -= 1;
+          A[r][r] += R_INTERNAL;
+          A[r][m] += p.volts;
+        });
+        const x = gauss(A, m);
+        if (!x) continue;
+        js.forEach((j, i) => { j.v = i === 0 ? 0 : x[i - 1]; });
+        bats.forEach((p, k) => { p.I = x[nv + k]; });
+        for (const p of parts) {
+          if (p.type === 'battery' || p.j[0].net !== n) continue;
+          const R = resistanceOf(p);
+          p.I = R == null ? 0 : (p.j[0].v - p.j[1].v) / R;
+        }
+      }
+    }
+
+    // ── Formatting ───────────────────────────────────────────
+    function fmtA(I) {
+      const a = Math.abs(I);
+      if (a < 0.005) return '0.00 A';
+      if (a < 1000) return a.toFixed(2) + ' A';
+      return Math.round(a) + ' A';
+    }
+    function fmtV(v) {
+      if (Math.abs(v) < 0.005) v = 0;
+      if (Math.abs(v) < 1000) return v.toFixed(2) + ' V';
+      return Math.round(v) + ' V';
+    }
+
+    // ── Drawing helpers ──────────────────────────────────────
+    function rr(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+    function line(x0, y0, x1, y1) {
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    }
+    function partNormal(p) {
+      const dx = p.j[1].x - p.j[0].x, dy = p.j[1].y - p.j[0].y;
+      const L = Math.hypot(dx, dy) || 1;
+      let nx = dy / L, ny = -dx / L;
+      if (ny > 0) { nx = -nx; ny = -ny; }
+      return { nx, ny };
+    }
+    function distSeg(px, py, ax, ay, bx, by) {
+      const dx = bx - ax, dy = by - ay;
+      const L2 = dx * dx + dy * dy || 1;
+      let t = ((px - ax) * dx + (py - ay) * dy) / L2;
+      t = Math.max(0, Math.min(1, t));
+      return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+    }
+
+    // Draw a part in local coords: terminals at (0,0) and (L,0).
+    function drawPartShape(p, L, th, hl) {
+      const side = Math.cos(th) >= 0 ? 1 : -1;
+      ctx.lineCap = 'round';
+      if (hl) { ctx.save(); ctx.shadowColor = '#4d90d6'; ctx.shadowBlur = 10; }
+      if (p.type === 'wire') {
+        ctx.strokeStyle = '#73481d'; ctx.lineWidth = 8; line(0, 0, L, 0);
+        ctx.strokeStyle = '#c07b3a'; ctx.lineWidth = 5; line(0, 0, L, 0);
+      } else if (p.type === 'battery') {
+        ctx.strokeStyle = '#7d838a'; ctx.lineWidth = 3;
+        line(0, 0, 10, 0); line(L - 10, 0, L, 0);
+        const x0 = 10, x1 = L - 10, h = 26;
+        rr(x0, -h / 2, x1 - x0, h, 4);
+        ctx.fillStyle = '#c89a55'; ctx.fill();
+        ctx.save();
+        rr(x0, -h / 2, x1 - x0, h, 4); ctx.clip();
+        ctx.fillStyle = '#1c1c20';
+        ctx.fillRect(x0, -h / 2, (x1 - x0) * 0.42, h);
+        ctx.restore();
+        rr(x0, -h / 2, x1 - x0, h, 4);
+        ctx.strokeStyle = '#5a4a30'; ctx.lineWidth = 1.4; ctx.stroke();
+        // positive nub
+        ctx.fillStyle = '#9aa0a6';
+        ctx.fillRect(x1, -5, 5, 10);
+        // − on the black end, + on the tan end (drawn with lines)
+        ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 2.4;
+        line(x0 + 8, 0, x0 + 18, 0);
+        ctx.strokeStyle = '#503c1c';
+        line(x1 - 20, 0, x1 - 8, 0);
+        line(x1 - 14, -6, x1 - 14, 6);
+      } else if (p.type === 'bulb') {
+        const cx = L / 2, gy = -34 * side;
+        const P = p.I * p.I * R_BULB;
+        const br = Math.min(1, P / 15);     // brightness ∝ power, saturating
+        if (br > 0.01) {
+          const grd = ctx.createRadialGradient(cx, gy, 4, cx, gy, 26 + 26 * br);
+          grd.addColorStop(0, 'rgba(255,236,140,' + (0.95 * br).toFixed(3) + ')');
+          grd.addColorStop(1, 'rgba(255,200,60,0)');
+          ctx.fillStyle = grd;
+          ctx.beginPath(); ctx.arc(cx, gy, 26 + 26 * br, 0, TAU); ctx.fill();
+        }
+        ctx.strokeStyle = '#7d838a'; ctx.lineWidth = 3;
+        line(0, 0, cx - 17, 0); line(cx + 17, 0, L, 0);
+        // glass
+        ctx.beginPath(); ctx.arc(cx, gy, 20, 0, TAU);
+        ctx.fillStyle = br > 0.02
+          ? 'rgba(255,244,180,' + (0.25 + 0.5 * br).toFixed(3) + ')'
+          : 'rgba(228,238,248,0.6)';
+        ctx.fill();
+        ctx.strokeStyle = '#90a4b8'; ctx.lineWidth = 1.5; ctx.stroke();
+        // filament posts + zigzag
+        ctx.strokeStyle = br > 0.05 ? '#caa53a' : '#667080'; ctx.lineWidth = 1.3;
+        line(cx - 6, -9 * side, cx - 6, gy + 9 * side);
+        line(cx + 6, -9 * side, cx + 6, gy + 9 * side);
+        ctx.strokeStyle = br > 0.05 ? '#ffd24a' : '#566070'; ctx.lineWidth = 1.7;
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, gy + 9 * side);
+        ctx.lineTo(cx - 3, gy + 3 * side);
+        ctx.lineTo(cx, gy + 9 * side);
+        ctx.lineTo(cx + 3, gy + 3 * side);
+        ctx.lineTo(cx + 6, gy + 9 * side);
+        ctx.stroke();
+        // gray base ("the light bulb with a gray bottom")
+        rr(cx - 17, -9, 34, 18, 3);
+        ctx.fillStyle = '#9aa0a6'; ctx.fill();
+        ctx.strokeStyle = '#6e747a'; ctx.lineWidth = 1.3; ctx.stroke();
+        ctx.strokeStyle = '#7d838a'; ctx.lineWidth = 1;
+        line(cx - 8, -9, cx - 8, 9);
+        line(cx, -9, cx, 9);
+        line(cx + 8, -9, cx + 8, 9);
+      } else if (p.type === 'sw') {
+        ctx.strokeStyle = '#7d838a'; ctx.lineWidth = 3;
+        line(0, 0, 16, 0); line(L - 16, 0, L, 0);
+        const span = L - 32;
+        const lx = 16 + Math.cos(p.lev) * span;
+        const ly = Math.sin(p.lev) * span * side;
+        ctx.strokeStyle = '#8d99a6'; ctx.lineWidth = 5;
+        line(16, 0, lx, ly);
+        ctx.fillStyle = '#5a6470';
+        ctx.beginPath(); ctx.arc(16, 0, 4.5, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(L - 16, 0, 4.5, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(lx, ly, 5, 0, TAU); ctx.fill();
+      } else if (p.type === 'resistor') {
+        ctx.strokeStyle = '#7d838a'; ctx.lineWidth = 3;
+        line(0, 0, 14, 0); line(L - 14, 0, L, 0);
+        rr(14, -10, L - 28, 20, 4);
+        ctx.fillStyle = '#ead9b0'; ctx.fill();
+        ctx.strokeStyle = '#b3a172'; ctx.lineWidth = 1.2; ctx.stroke();
+        const bw = L - 28;
+        const bands = [[0.24, '#7b3f00'], [0.4, '#1d1d1d'], [0.56, '#1d1d1d'], [0.76, '#c9a227']];
+        for (const [f, col] of bands) {
+          ctx.fillStyle = col;
+          ctx.fillRect(14 + bw * f - 2.5, -10, 5, 20);
+        }
+      } else if (p.type === 'ammeter') {
+        ctx.strokeStyle = '#7d838a'; ctx.lineWidth = 3;
+        line(0, 0, 12, 0); line(L - 12, 0, L, 0);
+        rr(12, -16, L - 24, 32, 7);
+        ctx.fillStyle = '#5b7fa6'; ctx.fill();
+        ctx.strokeStyle = '#41607f'; ctx.lineWidth = 1.4; ctx.stroke();
+        rr(22, -9, L - 44, 18, 3);
+        ctx.fillStyle = '#fff'; ctx.fill();
+        ctx.strokeStyle = '#9bb0c4'; ctx.lineWidth = 1; ctx.stroke();
+        const txt = fmtA(p.I);
+        ctx.fillStyle = '#1d2b3a';
+        ctx.font = 'bold ' + (txt.length > 8 ? 10 : 12) + 'px Segoe UI';
+        ctx.textAlign = 'center';
+        if (Math.cos(th) < 0) {
+          ctx.save(); ctx.translate(L / 2, 0); ctx.rotate(Math.PI);
+          ctx.fillText(txt, 0, 4); ctx.restore();
+        } else ctx.fillText(txt, L / 2, 4);
+      }
+      if (hl) ctx.restore();
+    }
+
+    function drawPart(p, hl) {
+      const a = p.j[0], b = p.j[1];
+      const th = Math.atan2(b.y - a.y, b.x - a.x);
+      const L = Math.hypot(b.x - a.x, b.y - a.y);
+      ctx.save();
+      ctx.translate(a.x, a.y);
+      ctx.rotate(th);
+      drawPartShape(p, L, th, hl);
+      ctx.restore();
+    }
+
+    function drawElectrons(p) {
+      const a = p.j[0], b = p.j[1];
+      const L = Math.hypot(b.x - a.x, b.y - a.y);
+      if (L < 14) return;
+      const n = Math.max(1, Math.min(14, Math.round(L / E_SPACING)));
+      const sp = L / n;
+      const ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+      const off = ((p.eoff % sp) + sp) % sp;
+      for (let i = 0; i < n; i++) {
+        const s = (off + i * sp) % L;
+        const x = a.x + ux * s, y = a.y + uy * s;
+        ctx.fillStyle = '#3a76c4';
+        ctx.beginPath(); ctx.arc(x, y, 3.4, 0, TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.beginPath(); ctx.arc(x - 1, y - 1, 1.1, 0, TAU); ctx.fill();
+      }
+    }
+
+    function flameLayer(x, y, h, w, col, alpha, sway) {
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(x - w, y);
+      ctx.quadraticCurveTo(x - w, y - h * 0.45, x + sway, y - h);
+      ctx.quadraticCurveTo(x + w, y - h * 0.45, x + w, y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    function drawFire(p) {
+      const a = p.j[0], b = p.j[1];
+      const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const nrm = partNormal(p);
+      const nf = Math.max(1, Math.floor(L / 55));
+      for (let i = 0; i < nf; i++) {
+        const f = (i + 1) / (nf + 1);
+        const x = a.x + (b.x - a.x) * f + nrm.nx * 6;
+        const y = a.y + (b.y - a.y) * f + nrm.ny * 6;
+        const s1 = Math.sin(animT * 9 + x * 0.13 + y * 0.07);
+        const s2 = Math.sin(animT * 13 + x * 0.21 + i * 2.3);
+        flameLayer(x, y, 22 + 4 * s1, 9, '#ff7b1f', 0.85, s2 * 3.5);
+        flameLayer(x, y, 13 + 3 * s2, 5.5, '#ffd23d', 0.95, s1 * 2.5);
+      }
+    }
+
+    // ── Voltmeter ────────────────────────────────────────────
+    function probeJ(pr) {
+      let best = null, bd = 16;
+      for (const j of junctions) {
+        const d = Math.hypot(j.x - pr.x, j.y - pr.y);
+        if (d < bd) { bd = d; best = j; }
+      }
+      return best;
+    }
+    function voltReading() {
+      const j0 = probeJ(volt.probes[0]), j1 = probeJ(volt.probes[1]);
+      if (!j0 || !j1 || j0.net !== j1.net) return '?';
+      return fmtV(j0.v - j1.v);
+    }
+    function insideVoltBody(x, y) {
+      return volt.deployed && Math.abs(x - volt.x) < 46 && Math.abs(y - volt.y) < 32;
+    }
+    function drawVoltmeter() {
+      if (!volt.deployed) return;
+      const px0 = volt.probes[0], px1 = volt.probes[1];
+      // leads
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#cf3535';
+      ctx.beginPath();
+      ctx.moveTo(volt.x - 26, volt.y + 30);
+      ctx.quadraticCurveTo((volt.x - 26 + px0.x) / 2, Math.max(volt.y + 30, px0.y) + 36, px0.x, px0.y);
+      ctx.stroke();
+      ctx.strokeStyle = '#2c2c2c';
+      ctx.beginPath();
+      ctx.moveTo(volt.x + 26, volt.y + 30);
+      ctx.quadraticCurveTo((volt.x + 26 + px1.x) / 2, Math.max(volt.y + 30, px1.y) + 36, px1.x, px1.y);
+      ctx.stroke();
+      // body
+      rr(volt.x - 46, volt.y - 32, 92, 64, 9);
+      ctx.fillStyle = '#f7f9fb'; ctx.fill();
+      ctx.strokeStyle = '#8a97a5'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#56657a';
+      ctx.font = 'bold 10px Segoe UI'; ctx.textAlign = 'center';
+      ctx.fillText('VOLTMETER', volt.x, volt.y - 20);
+      rr(volt.x - 38, volt.y - 14, 76, 22, 4);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = '#b6c2cd'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = '#1d2b3a'; ctx.font = 'bold 12px Segoe UI';
+      ctx.fillText(voltReading(), volt.x, volt.y + 1);
+      // lead sockets
+      ctx.fillStyle = '#cf3535';
+      ctx.beginPath(); ctx.arc(volt.x - 26, volt.y + 22, 4, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#2c2c2c';
+      ctx.beginPath(); ctx.arc(volt.x + 26, volt.y + 22, 4, 0, TAU); ctx.fill();
+      // probes
+      for (let i = 0; i < 2; i++) {
+        const pr = volt.probes[i];
+        const col = i === 0 ? '#cf3535' : '#2c2c2c';
+        ctx.strokeStyle = col; ctx.lineWidth = 5; ctx.lineCap = 'round';
+        line(pr.x + 4, pr.y + 6, pr.x + 12, pr.y + 18);
+        ctx.fillStyle = col;
+        ctx.beginPath(); ctx.arc(pr.x, pr.y, 5, 0, TAU); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(pr.x, pr.y, 5, 0, TAU); ctx.stroke();
+      }
+    }
+
+    // ── Tray ─────────────────────────────────────────────────
+    const TRAY_ITEMS = [
+      { type: 'wire',     label: 'Wire',      s: 0.62 },
+      { type: 'battery',  label: 'Battery',   s: 0.58 },
+      { type: 'bulb',     label: 'Bulb',      s: 0.52 },
+      { type: 'sw',       label: 'Switch',    s: 0.60 },
+      { type: 'resistor', label: 'Resistor',  s: 0.58 },
+      { type: 'ammeter',  label: 'Ammeter',   s: 0.56 },
+      { type: 'volt',     label: 'Voltmeter' },
+    ];
+    const SLOT_H = 58, SLOT_Y0 = 26;
+    const FAKES = {};
+    for (const t of Object.keys(DEFS)) {
+      FAKES[t] = { type: t, I: 0, volts: 9, ohms: 10, closed: false, lev: -0.6, eoff: 0 };
+    }
+    function drawTray() {
+      ctx.fillStyle = '#fdfdfd';
+      ctx.fillRect(0, 0, TRAY_W, H);
+      ctx.strokeStyle = '#d7dee6'; ctx.lineWidth = 1;
+      line(TRAY_W - 0.5, 0, TRAY_W - 0.5, H);
+      ctx.fillStyle = '#56657a';
+      ctx.font = 'bold 12px Segoe UI'; ctx.textAlign = 'center';
+      ctx.fillText('Parts', TRAY_W / 2, 16);
+      TRAY_ITEMS.forEach((item, i) => {
+        const cy = SLOT_Y0 + i * SLOT_H + 20;
+        if (item.type === 'volt') {
+          ctx.save();
+          if (volt.deployed) ctx.globalAlpha = 0.35;
+          rr(TRAY_W / 2 - 22, cy - 15, 44, 30, 6);
+          ctx.fillStyle = '#f7f9fb'; ctx.fill();
+          ctx.strokeStyle = '#8a97a5'; ctx.lineWidth = 1.3; ctx.stroke();
+          rr(TRAY_W / 2 - 15, cy - 9, 30, 11, 2);
+          ctx.fillStyle = '#fff'; ctx.fill();
+          ctx.strokeStyle = '#b6c2cd'; ctx.lineWidth = 1; ctx.stroke();
+          ctx.fillStyle = '#cf3535';
+          ctx.beginPath(); ctx.arc(TRAY_W / 2 - 8, cy + 8, 3, 0, TAU); ctx.fill();
+          ctx.fillStyle = '#2c2c2c';
+          ctx.beginPath(); ctx.arc(TRAY_W / 2 + 8, cy + 8, 3, 0, TAU); ctx.fill();
+          ctx.restore();
+        } else {
+          const len = DEFS[item.type].len;
+          ctx.save();
+          ctx.translate(TRAY_W / 2, cy + (item.type === 'bulb' ? 12 : 0));
+          ctx.scale(item.s, item.s);
+          ctx.translate(-len / 2, 0);
+          drawPartShape(FAKES[item.type], len, 0, false);
+          ctx.restore();
+        }
+        ctx.fillStyle = '#66788c';
+        ctx.font = '10.5px Segoe UI'; ctx.textAlign = 'center';
+        ctx.fillText(item.label, TRAY_W / 2, SLOT_Y0 + i * SLOT_H + 50);
+      });
+    }
+    function trayAt(x, y) {
+      if (x >= TRAY_W || y < SLOT_Y0) return null;
+      const i = Math.floor((y - SLOT_Y0) / SLOT_H);
+      if (i < 0 || i >= TRAY_ITEMS.length) return null;
+      return TRAY_ITEMS[i].type;
+    }
+
+    // ── Hit tests ────────────────────────────────────────────
+    function juncAt(x, y) {
+      for (let i = junctions.length - 1; i >= 0; i--) {
+        const j = junctions[i];
+        if (Math.hypot(j.x - x, j.y - y) < 11) return j;
+      }
+      return null;
+    }
+    function partAt(x, y) {
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const p = parts[i];
+        const a = p.j[0], b = p.j[1];
+        const tol = p.type === 'wire' ? 9 : 14;
+        if (distSeg(x, y, a.x, a.y, b.x, b.y) < tol) return p;
+        if (p.type === 'bulb') {
+          const m = mid(p), nrm = partNormal(p);
+          if (Math.hypot(x - (m.x + nrm.nx * 34), y - (m.y + nrm.ny * 34)) < 23) return p;
+        }
+      }
+      return null;
+    }
+
+    // ── Popup (inspector) ────────────────────────────────────
+    const pop = document.getElementById('pop');
+    function closePopup() {
+      pop.style.display = 'none';
+      pop.innerHTML = '';
+    }
+    function placePopup(x, y) {
+      pop.style.left = Math.max(4, Math.min(W - 248, x - 120)) + 'px';
+      pop.style.top = Math.max(4, Math.min(500 - 140, y)) + 'px';
+      pop.style.display = 'block';
+    }
+    function openInspector(p) {
+      const m = mid(p);
+      let html = '';
+      if (p.type === 'battery') {
+        html =
+          '<div class="t">Battery</div>' +
+          '<div class="row"><span>Voltage</span><b id="pv">' + p.volts.toFixed(1) + ' V</b></div>' +
+          '<div class="row2"><button class="nud" id="vm">&minus;</button>' +
+          '<input id="vs" type="range" min="0" max="120" step="0.1" value="' + p.volts + '">' +
+          '<button class="nud" id="vp">+</button></div>' +
+          '<div class="row3"><button class="act rmb" id="rm">Remove</button>' +
+          '<button class="act" id="cl">Close</button></div>';
+      } else if (p.type === 'resistor') {
+        html =
+          '<div class="t">Resistor</div>' +
+          '<div class="row"><span>Resistance</span><b id="pv">' + p.ohms + ' &Omega;</b></div>' +
+          '<div class="row2"><input id="vs" type="range" min="1" max="100" step="1" value="' + p.ohms + '"></div>' +
+          '<div class="row3"><button class="act rmb" id="rm">Remove</button>' +
+          '<button class="act" id="cl">Close</button></div>';
+      } else if (p.type === 'bulb') {
+        html =
+          '<div class="t">Light Bulb</div>' +
+          '<div class="note">Resistance: 10 &Omega; (fixed). It glows brighter when more power flows through it.</div>' +
+          '<div class="row3"><button class="act rmb" id="rm">Remove</button>' +
+          '<button class="act" id="cl">Close</button></div>';
+      } else if (p.type === 'ammeter') {
+        html =
+          '<div class="t">Ammeter</div>' +
+          '<div class="note">Reads the current flowing through it: <b>' + fmtA(p.I) + '</b>. Wire it into the circuit, or drop it onto a wire.</div>' +
+          '<div class="row3"><button class="act rmb" id="rm">Remove</button>' +
+          '<button class="act" id="cl">Close</button></div>';
+      } else {
+        html =
+          '<div class="t">Wire</div>' +
+          '<div class="note">Connects parts. Its length does not affect the circuit.</div>' +
+          '<div class="row3"><button class="act rmb" id="rm">Remove</button>' +
+          '<button class="act" id="cl">Close</button></div>';
+      }
+      pop.innerHTML = html;
+      placePopup(m.x, m.y > 290 ? m.y - 150 : m.y + 26);
+      const rm = document.getElementById('rm');
+      if (rm) rm.addEventListener('click', () => deletePart(p));
+      const cl = document.getElementById('cl');
+      if (cl) cl.addEventListener('click', closePopup);
+      const vs = document.getElementById('vs');
+      const pv = document.getElementById('pv');
+      if (vs && p.type === 'battery') {
+        const setV = v => {
+          p.volts = Math.max(0, Math.min(120, Math.round(v * 10) / 10));
+          vs.value = p.volts;
+          pv.textContent = p.volts.toFixed(1) + ' V';
+          markDirty();
+        };
+        vs.addEventListener('input', () => setV(parseFloat(vs.value)));
+        document.getElementById('vm').addEventListener('click', () => setV(p.volts - 0.1));
+        document.getElementById('vp').addEventListener('click', () => setV(p.volts + 0.1));
+      } else if (vs && p.type === 'resistor') {
+        vs.addEventListener('input', () => {
+          p.ohms = parseFloat(vs.value);
+          pv.innerHTML = p.ohms + ' &Omega;';
+          markDirty();
+        });
+      }
+    }
+    function openJunctionPopup(j) {
+      pop.innerHTML =
+        '<div class="t">Junction</div>' +
+        '<div class="note">' + j.terms.length + ' ends are connected here.</div>' +
+        '<div class="row3"><button class="act" id="cut">&#9986; Disconnect</button>' +
+        '<button class="act" id="cl">Close</button></div>';
+      placePopup(j.x, j.y > 290 ? j.y - 130 : j.y + 18);
+      document.getElementById('cut').addEventListener('click', () => splitJunction(j));
+      document.getElementById('cl').addEventListener('click', closePopup);
+    }
+
+    // ── Interaction ──────────────────────────────────────────
+    function cpos(e) {
+      const r = canvas.getBoundingClientRect();
+      return [e.clientX - r.left, e.clientY - r.top];
+    }
+    canvas.addEventListener('pointerdown', e => {
+      canvas.setPointerCapture(e.pointerId);
+      const [mx, my] = cpos(e);
+      mouse = { x: mx, y: my };
+      closePopup();
+      // voltmeter probes / body
+      if (volt.deployed) {
+        for (let i = 0; i < 2; i++) {
+          const pr = volt.probes[i];
+          if (Math.hypot(mx - pr.x, my - pr.y) < 14) {
+            drag = { kind: 'probe', i, moved: 0 };
+            return;
+          }
+        }
+        if (insideVoltBody(mx, my)) {
+          drag = { kind: 'vbody', dx: volt.x - mx, dy: volt.y - my, moved: 0 };
+          return;
+        }
+      }
+      // junctions
+      const j = juncAt(mx, my);
+      if (j) {
+        if (j.terms.length === 1) {
+          const [p, k] = j.terms[0];
+          drag = { kind: 'term', p, k, moved: 0 };
+        } else {
+          drag = { kind: 'junction', j, moved: 0 };
+        }
+        return;
+      }
+      // part bodies
+      const p = partAt(mx, my);
+      if (p) {
+        drag = { kind: 'body', p, moved: 0 };
+        return;
+      }
+      // tray
+      const t = trayAt(mx, my);
+      if (t) {
+        if (t === 'volt') {
+          if (volt.deployed) return;
+          volt.deployed = true;
+          volt.x = Math.max(TRAY_W + 60, Math.min(W - 60, mx + 40));
+          volt.y = Math.max(44, Math.min(H - 100, my));
+          volt.probes[0] = { x: volt.x - 30, y: volt.y + 64 };
+          volt.probes[1] = { x: volt.x + 30, y: volt.y + 64 };
+          drag = { kind: 'vbody', dx: volt.x - mx, dy: volt.y - my, moved: 0 };
+        } else {
+          if (parts.length >= MAX_PARTS) return;
+          const d = DEFS[t];
+          const np = addPart(t, mx - d.len / 2, my, mx + d.len / 2, my, {});
+          drag = { kind: 'body', p: np, moved: 0 };
+        }
+        return;
+      }
+    });
+
+    canvas.addEventListener('pointermove', e => {
+      const [mx, my] = cpos(e);
+      const dx = mx - mouse.x, dy = my - mouse.y;
+      mouse = { x: mx, y: my };
+      if (!drag) { updateCursor(); return; }
+      drag.moved += Math.abs(dx) + Math.abs(dy);
+      if (drag.kind === 'probe') {
+        const pr = volt.probes[drag.i];
+        pr.x = Math.max(8, Math.min(W - 8, mx));
+        pr.y = Math.max(8, Math.min(H - 8, my));
+      } else if (drag.kind === 'vbody') {
+        const nx = Math.max(8, Math.min(W - 46, mx + drag.dx));
+        const ny = Math.max(36, Math.min(H - 36, my + drag.dy));
+        const ddx = nx - volt.x, ddy = ny - volt.y;
+        volt.x = nx; volt.y = ny;
+        for (const pr of volt.probes) { pr.x += ddx; pr.y += ddy; }
+      } else if (drag.kind === 'term') {
+        const { p, k } = drag;
+        const j = p.j[k];
+        const cx = Math.max(TRAY_W + 8, Math.min(W - 8, mx));
+        const cy = Math.max(8, Math.min(H - 8, my));
+        if (p.rigid) {
+          const o = p.j[1 - k];
+          const d = Math.hypot(cx - o.x, cy - o.y) || 1;
+          const L = DEFS[p.type].len;
+          j.x = o.x + (cx - o.x) / d * L;
+          j.y = o.y + (cy - o.y) / d * L;
+        } else {
+          const o = p.j[1 - k];
+          let nx2 = cx, ny2 = cy;
+          const d = Math.hypot(nx2 - o.x, ny2 - o.y);
+          if (d < 22) {
+            const f = d > 0.001 ? 22 / d : 0;
+            if (f) { nx2 = o.x + (nx2 - o.x) * f; ny2 = o.y + (ny2 - o.y) * f; }
+            else { nx2 = o.x + 22; ny2 = o.y; }
+          }
+          j.x = nx2; j.y = ny2;
+        }
+      } else if (drag.kind === 'junction') {
+        const set = moveGroupSeeds([drag.j]);
+        const [cdx, cdy] = clampDelta(set, dx, dy, TRAY_W + 8);
+        translateJs(set, cdx, cdy);
+      } else if (drag.kind === 'body') {
+        const set = moveGroupSeeds([drag.p.j[0], drag.p.j[1]]);
+        const [cdx, cdy] = clampDelta(set, dx, dy, 8);
+        translateJs(set, cdx, cdy);
+      }
+    });
+
+    function endDrag(e) {
+      const [mx, my] = cpos(e);
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      if (d.kind === 'probe') return;
+      if (d.kind === 'vbody') {
+        if (mx < TRAY_W) volt.deployed = false;
+        return;
+      }
+      if (d.kind === 'term') {
+        const j = d.p.j[d.k];
+        const tgt = snapTarget(j, d.p);
+        if (tgt) snapTermTo(d.p, d.k, tgt);
+        return;
+      }
+      if (d.kind === 'junction') {
+        if (d.moved < 6) { openJunctionPopup(d.j); return; }
+        const tgt = snapTarget(d.j, null);
+        if (tgt) {
+          const set = moveGroupSeeds([d.j]);
+          if (!set.has(tgt)) translateJs(set, tgt.x - d.j.x, tgt.y - d.j.y);
+          mergeJunctions(tgt, d.j);
+        }
+        return;
+      }
+      if (d.kind === 'body') {
+        const p = d.p;
+        if (d.moved < 6) {
+          if (p.type === 'sw') { p.closed = !p.closed; markDirty(); }
+          else openInspector(p);
+          return;
+        }
+        if (mx < TRAY_W) { deletePart(p); return; }
+        if (p.type === 'ammeter') {
+          const hit = trySplice(p);
+          if (hit) { doSplice(p, hit); return; }
+        }
+        for (let k = 0; k < 2; k++) {
+          const j = p.j[k];
+          if (j.terms.length > 1) continue;
+          const tgt = snapTarget(j, p);
+          if (tgt) snapTermTo(p, k, tgt);
+        }
+      }
+    }
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+
+    function updateCursor() {
+      const { x, y } = mouse;
+      let c = 'default';
+      if (drag) c = 'grabbing';
+      else if (volt.deployed &&
+        (insideVoltBody(x, y) ||
+         volt.probes.some(pr => Math.hypot(x - pr.x, y - pr.y) < 14))) c = 'grab';
+      else if (juncAt(x, y) || partAt(x, y)) c = 'grab';
+      else if (trayAt(x, y)) c = 'pointer';
+      canvas.style.cursor = c;
+    }
+
+    // ── Main draw ────────────────────────────────────────────
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      // work area ("the main blue area")
+      ctx.fillStyle = '#e9f2fb';
+      ctx.fillRect(TRAY_W, 0, W - TRAY_W, H);
+      ctx.fillStyle = '#aabbcc';
+      ctx.font = '11.5px Segoe UI';
+      ctx.textAlign = 'center';
+      ctx.fillText('Drag parts from the tray. Pull ends together to connect them.',
+        TRAY_W + (W - TRAY_W) / 2, 18);
+      drawTray();
+      // snap / splice previews
+      let snapPrev = null, spliceWire = null;
+      if (drag) {
+        if (drag.kind === 'term') snapPrev = snapTarget(drag.p.j[drag.k], drag.p);
+        else if (drag.kind === 'junction') snapPrev = snapTarget(drag.j, null);
+        else if (drag.kind === 'body') {
+          if (drag.p.type === 'ammeter') {
+            const hit = trySplice(drag.p);
+            if (hit) spliceWire = hit.w;
+          }
+          if (!spliceWire) {
+            for (let k = 0; k < 2; k++) {
+              if (drag.p.j[k].terms.length > 1) continue;
+              const t = snapTarget(drag.p.j[k], drag.p);
+              if (t) { snapPrev = t; break; }
+            }
+          }
+        }
+      }
+      if (spliceWire) {
+        const a = spliceWire.j[0], b = spliceWire.j[1];
+        ctx.strokeStyle = 'rgba(40,170,90,0.55)';
+        ctx.lineWidth = 12; ctx.lineCap = 'round';
+        line(a.x, a.y, b.x, b.y);
+      }
+      // wires under everything else
+      for (const p of parts) if (p.type === 'wire') drawPart(p, p === (drag && drag.p));
+      // electrons (visible on wires and leads, hidden under rigid bodies)
+      for (const p of parts) drawElectrons(p);
+      // rigid parts
+      for (const p of parts) if (p.type !== 'wire') drawPart(p, p === (drag && drag.p));
+      // junction markers
+      for (const j of junctions) {
+        if (j.terms.length >= 2) {
+          ctx.fillStyle = '#3b4754';
+          ctx.beginPath(); ctx.arc(j.x, j.y, 5, 0, TAU); ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.arc(j.x, j.y, 5, 0, TAU); ctx.stroke();
+        } else {
+          ctx.fillStyle = '#fff7e8';
+          ctx.beginPath(); ctx.arc(j.x, j.y, 5, 0, TAU); ctx.fill();
+          ctx.strokeStyle = '#e08a00'; ctx.lineWidth = 1.8;
+          ctx.beginPath(); ctx.arc(j.x, j.y, 5, 0, TAU); ctx.stroke();
+        }
+      }
+      if (snapPrev) {
+        ctx.strokeStyle = '#28aa5a'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(snapPrev.x, snapPrev.y, 10, 0, TAU); ctx.stroke();
+      }
+      // fire
+      for (const p of parts) if (Math.abs(p.I) > FIRE_AMPS) drawFire(p);
+      // labels / values
+      ctx.textAlign = 'center';
+      ctx.font = '11px Segoe UI';
+      for (const p of parts) {
+        const m = mid(p), nrm = partNormal(p);
+        if (labelsOn && p.type !== 'wire') {
+          const off = p.type === 'bulb' ? 66 : 26;
+          ctx.fillStyle = '#5b6b7c';
+          ctx.fillText(DEFS[p.type].name, m.x + nrm.nx * off, m.y + nrm.ny * off + 4);
+        }
+        if (valuesOn) {
+          let vt = null;
+          if (p.type === 'battery') vt = p.volts.toFixed(1) + ' V';
+          else if (p.type === 'resistor') vt = p.ohms + ' Ω';
+          else if (p.type === 'bulb') vt = R_BULB + ' Ω';
+          if (vt) {
+            ctx.fillStyle = '#7c6a3f';
+            ctx.fillText(vt, m.x - nrm.nx * 24, m.y - nrm.ny * 24 + 4);
+          }
+        }
+      }
+      drawVoltmeter();
+      // delete affordance
+      if (drag && drag.kind === 'body' && mouse.x < TRAY_W) {
+        ctx.fillStyle = 'rgba(220,60,60,0.12)';
+        ctx.fillRect(0, 0, TRAY_W, H);
+        ctx.fillStyle = '#b03030';
+        ctx.font = 'bold 12px Segoe UI'; ctx.textAlign = 'center';
+        ctx.fillText('Remove', TRAY_W / 2, H - 12);
+      }
+      if (drag && drag.kind === 'vbody' && mouse.x < TRAY_W) {
+        ctx.fillStyle = 'rgba(90,110,140,0.10)';
+        ctx.fillRect(0, 0, TRAY_W, H);
+        ctx.fillStyle = '#56657a';
+        ctx.font = 'bold 12px Segoe UI'; ctx.textAlign = 'center';
+        ctx.fillText('Put away', TRAY_W / 2, H - 12);
+      }
+    }
+
+    // ── Animation loop ───────────────────────────────────────
+    let lastTs = null;
+    function frame(ts) {
+      if (lastTs == null) lastTs = ts;
+      const dt = Math.min((ts - lastTs) / 1000, 0.05);
+      lastTs = ts;
+      animT += dt;
+      if (dirty) solve();
+      for (const p of parts) {
+        const speed = Math.min(E_SPEED * Math.abs(p.I), E_SPEED_MAX);
+        if (speed > 0.5) {
+          p.eoff -= Math.sign(p.I) * speed * dt;   // electrons opposite conventional current
+          if (p.eoff > 1e6 || p.eoff < -1e6) p.eoff %= E_SPACING;
+        }
+        if (p.type === 'sw') {
+          const tgt = p.closed ? 0 : -0.6;
+          p.lev += (tgt - p.lev) * Math.min(1, dt * 14);
+        }
+      }
+      draw();
+      requestAnimationFrame(frame);
+    }
+
+    // ── Presets / reset ──────────────────────────────────────
+    function wireBetween(jA, jB) {
+      const w = addPart('wire', jA.x, jA.y, jB.x, jB.y, {});
+      mergeJunctions(jA, w.j[0]);
+      mergeJunctions(jB, w.j[1]);
+      return w;
+    }
+    function init() {
+      parts = []; junctions = []; nextId = 1; drag = null;
+      volt = {
+        deployed: false, x: 640, y: 120,
+        probes: [{ x: 610, y: 184 }, { x: 670, y: 184 }],
+      };
+      closePopup();
+      labelsOn = Q.labels !== '0';
+      valuesOn = Q.values === '1';
+      document.getElementById('cbLabels').checked = labelsOn;
+      document.getElementById('cbValues').checked = valuesOn;
+      let v = parseFloat(Q.volts);
+      if (!isFinite(v)) v = 9;
+      v = Math.max(0, Math.min(120, Math.round(v * 10) / 10));
+      if ((Q.preset || 'blank') === 'bulb_circuit') {
+        const bulb = addPart('bulb', 330, 128, 394, 128, {});
+        const sw = addPart('sw', 540, 196, 540, 284, { closed: Q['switch'] !== 'open' });
+        const bat = addPart('battery', 320, 360, 424, 360, { volts: v });
+        wireBetween(bulb.j[1], sw.j[0]);    // bulb right -> switch top
+        wireBetween(sw.j[1], bat.j[1]);     // switch bottom -> battery + (tan)
+        wireBetween(bat.j[0], bulb.j[0]);   // battery - (black) -> bulb left
+      }
+      markDirty();
+    }
+
+    document.getElementById('cbLabels').addEventListener('change', e => {
+      labelsOn = e.target.checked;
+    });
+    document.getElementById('cbValues').addEventListener('change', e => {
+      valuesOn = e.target.checked;
+    });
+    document.getElementById('resetBtn').addEventListener('click', () => init());
+
+    init();
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>

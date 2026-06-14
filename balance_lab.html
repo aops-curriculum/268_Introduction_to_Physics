@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Balance Lab</title>
+  <!-- Original AoPS interactive. Replaces the third-party "Balancing Act" simulation. -->
+<script>
+// EigenNode auto-height v2.4
+(function() {
+  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
+  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
+  // space inside the iframe — AoPS classroom embeds in a narrower column
+  // than the 600px content, so a horizontal scrollbar appears and steals
+  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
+  var BUFFER = 4;
+  var H_SCROLLBAR = 18;
+  var measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    // Temporarily neutralise body's height/min-height (overriding stylesheet
+    // rules with !important) so scrollHeight reflects actual content extent.
+    // Without this, patterns like body { height: 100vh } cause scrollHeight
+    // to echo the iframe's current viewport — adding BUFFER each cycle
+    // ratchets the iframe taller forever. Browser doesn't paint until this
+    // synchronous block returns, so no visible flicker.
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    // Check the documentElement only — that's the element that owns the
+    // iframe's horizontal scrollbar. Body can be narrower than the iframe
+    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
+    // 1-2px overflow that doesn't actually trigger a scrollbar.
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var h = measure();
+    if (h > 0 && Math.abs(h - last) >= 2) {
+      last = h;
+      window.parent.postMessage({ type: 'resize', height: h }, '*');
+    }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+})();
+</script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 700px; height: 500px; overflow: hidden;
+      background: #f5f5f5;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      user-select: none;
+    }
+    canvas { display: block; touch-action: none; }
+    #bar {
+      width: 700px; height: 70px;
+      padding: 5px 12px 3px;
+      background: #f0f2f4;
+      border-top: 1px solid #d6dbe0;
+      font-size: 13px; color: #334;
+    }
+    #bar .row { display: flex; align-items: center; gap: 16px; height: 30px; }
+    #bar .lbl { font-weight: 600; width: 60px; color: #445; }
+    #bar label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+    #bar input { cursor: pointer; }
+    #reset {
+      margin-left: auto;
+      font: 13px 'Segoe UI', system-ui, sans-serif;
+      color: #445;
+      background: #fff;
+      border: 1px solid #b9c2cb;
+      border-radius: 5px;
+      padding: 3px 12px;
+      cursor: pointer;
+    }
+    #reset:hover { background: #e8eef4; }
+  </style>
+</head>
+<body>
+  <canvas id="c" width="700" height="430"></canvas>
+  <div id="bar">
+    <div class="row">
+      <span class="lbl">Show:</span>
+      <label><input type="checkbox" id="cbLabels" checked> Mass labels</label>
+      <label><input type="checkbox" id="cbForces"> Forces from objects</label>
+      <label><input type="checkbox" id="cbLevel"> Level indicator</label>
+    </div>
+    <div class="row">
+      <span class="lbl">Position:</span>
+      <label><input type="radio" name="pos" value="none"> None</label>
+      <label><input type="radio" name="pos" value="rulers" checked> Rulers</label>
+      <label><input type="radio" name="pos" value="marks"> Marks</label>
+      <button id="reset" title="Reset the simulation">&#8634; Reset</button>
+    </div>
+  </div>
+  <script>
+  (() => {
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const W = 700, H = 430;
+
+    // ── Layout / geometry ────────────────────────────────────
+    const S = 120;                       // pixels per meter
+    const PX = 300, PY = 308;            // pivot (plank bottom center)
+    const HALF = 2 * S;                  // plank half-length (2 m)
+    const PT = 24;                       // plank thickness, px
+    const GROUND = 412;
+    const THMAX = 25 * Math.PI / 180;    // max tilt
+    const SNAP = 0.25, XMAX = 2;         // snap grid (m), arm length (m)
+    const COL_RX = 210, COL_W = 26;      // support columns at ±1.75 m
+    const TOG = { x: 140, y: 390, w: 120, h: 34 };
+    const KITP = { x: 546, y: 10, w: 146, h: 158 };
+
+    // ── Object kit ───────────────────────────────────────────
+    // Mystery masses (hidden from students): A=2.5, B=7.5, C=12.5, D=40 kg.
+    const TYPES = {
+      b5:    { kind: 'brick', n: 1, mass: 5,    w: 46, h: 17,  label: '5 kg'  },
+      b10:   { kind: 'brick', n: 2, mass: 10,   w: 46, h: 34,  label: '10 kg' },
+      b15:   { kind: 'brick', n: 3, mass: 15,   w: 46, h: 51,  label: '15 kg' },
+      b20:   { kind: 'brick', n: 4, mass: 20,   w: 46, h: 68,  label: '20 kg' },
+      adult: { kind: 'adult', mass: 80, w: 44, h: 118, label: '80 kg' },
+      child: { kind: 'child', mass: 20, w: 34, h: 78,  label: '20 kg' },
+      mA: { kind: 'box', letter: 'A', mass: 2.5,  w: 32, h: 26, fill: '#d8aa64', dark: '#a37a38' },
+      mB: { kind: 'box', letter: 'B', mass: 7.5,  w: 38, h: 30, fill: '#a9bd7f', dark: '#75894c' },
+      mC: { kind: 'box', letter: 'C', mass: 12.5, w: 30, h: 34, fill: '#8fb0c9', dark: '#5d8198' },
+      mD: { kind: 'box', letter: 'D', mass: 40,   w: 36, h: 28, fill: '#c79fb4', dark: '#926c83' },
+    };
+    const PAGES = [
+      { title: 'Bricks',          items: ['b5', 'b10', 'b15', 'b20'] },
+      { title: 'People & Mystery', items: ['adult', 'child', 'mA', 'mB', 'mC', 'mD'] },
+    ];
+
+    // ── URL parameters ───────────────────────────────────────
+    // supports=up|down  rulers=1|0  position=none|rulers|marks  labels=1|0
+    // forces=1|0  level=1|0  page=1|2  clean=1  place=<item>@<pos>,...
+    //   items: 5,10,15,20,adult,child,a,b,c,d ; pos in meters, negative=left
+    const Q = new URLSearchParams(location.search);
+    const qBool = (name, dflt) => {
+      const v = Q.get(name);
+      if (v === null) return dflt;
+      return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
+    };
+    let pos0 = (Q.get('position') || 'rulers').toLowerCase();
+    if (pos0 !== 'none' && pos0 !== 'rulers' && pos0 !== 'marks') pos0 = 'rulers';
+    if (Q.has('rulers')) {
+      if (qBool('rulers', true)) pos0 = 'rulers';
+      else if (pos0 === 'rulers') pos0 = 'none';
+    }
+    const sv = (Q.get('supports') || 'up').toLowerCase();
+    const init = {
+      supportsUp: !(sv === 'down' || sv === '0' || sv === 'off' || sv === 'removed'),
+      pos: pos0,
+      labels: qBool('labels', true),
+      forces: qBool('forces', false),
+      level:  qBool('level', false),
+      page: Q.get('page') === '2' ? 1 : 0,
+      clean: qBool('clean', false),
+      placed: [],
+    };
+    (function parsePlace() {
+      const str = Q.get('place');
+      if (!str) return;
+      const map = { '5': 'b5', '10': 'b10', '15': 'b15', '20': 'b20',
+                    adult: 'adult', child: 'child', a: 'mA', b: 'mB', c: 'mC', d: 'mD' };
+      for (const tok of str.split(',')) {
+        const m = tok.trim().match(/^([a-z0-9]+)@(-?\d*\.?\d+)$/i);
+        if (!m) continue;
+        const t = map[m[1].toLowerCase()];
+        if (!t) continue;
+        let p = Math.round(parseFloat(m[2]) / SNAP) * SNAP;
+        if (!isFinite(p) || p === 0) continue;
+        p = Math.max(-XMAX, Math.min(XMAX, p));
+        init.placed.push({ type: t, pos: p });
+      }
+    })();
+
+    // ── State ────────────────────────────────────────────────
+    let placed = [];                 // [{type, pos}] in stacking order
+    let supportsUp = true;           // toggle target
+    let supportT = 1;                // 1 = columns fully up, 0 = removed
+    let theta = 0, omega = 0;        // plank angle (rad, + = right side down)
+    let page = 0;
+    let hintDone = false;
+    let drag = null;                 // {type, mx, my}
+    let snapPos = null;
+    let kitRects = [];
+    const ui = { labels: true, forces: false, level: false, pos: 'rulers' };
+
+    // ── HTML controls ────────────────────────────────────────
+    const cbLabels = document.getElementById('cbLabels');
+    const cbForces = document.getElementById('cbForces');
+    const cbLevel  = document.getElementById('cbLevel');
+    const posRadios = document.querySelectorAll('input[name="pos"]');
+    cbLabels.addEventListener('change', () => { ui.labels = cbLabels.checked; });
+    cbForces.addEventListener('change', () => { ui.forces = cbForces.checked; });
+    cbLevel.addEventListener('change',  () => { ui.level  = cbLevel.checked;  });
+    posRadios.forEach(r => r.addEventListener('change', () => { if (r.checked) ui.pos = r.value; }));
+    function syncControls() {
+      cbLabels.checked = ui.labels;
+      cbForces.checked = ui.forces;
+      cbLevel.checked  = ui.level;
+      posRadios.forEach(r => { r.checked = (r.value === ui.pos); });
+    }
+    function reset() {
+      placed = init.placed.map(o => ({ type: o.type, pos: o.pos }));
+      supportsUp = init.supportsUp;
+      supportT = supportsUp ? 1 : 0;
+      theta = 0; omega = 0;
+      ui.labels = init.labels; ui.forces = init.forces;
+      ui.level = init.level;   ui.pos = init.pos;
+      page = init.page;
+      hintDone = placed.length > 0;
+      drag = null; snapPos = null;
+      syncControls();
+    }
+    document.getElementById('reset').addEventListener('click', reset);
+    reset();
+
+    // ── Physics ──────────────────────────────────────────────
+    // Law of the lever: the plank is balanced iff sum(m_i * x_i) = 0 exactly
+    // (signed positions on the 0.25 m snap grid), i.e. M1*x1 = M2*x2.
+    const G = 9.8;
+    const I_PLANK = 40;   // (1/12) * 30 kg * (4 m)^2
+    const netMoment = () => placed.reduce((n, o) => n + TYPES[o.type].mass * o.pos, 0);
+    const inertia   = () => placed.reduce((I, o) => I + TYPES[o.type].mass * o.pos * o.pos, I_PLANK);
+
+    function step(h) {
+      if (supportsUp || supportT > 0.001) {
+        // Columns present (or still animating): plank driven firmly level.
+        omega += (-120 * theta - 22 * omega) * h;
+        theta += omega * h;
+        if (Math.abs(theta) < 1e-4 && Math.abs(omega) < 1e-3) { theta = 0; omega = 0; }
+      } else {
+        const net = netMoment();
+        if (net === 0) {
+          // Exactly balanced: gently return to (and hold) level.
+          omega += (-8 * theta - 5.7 * omega) * h;
+        } else {
+          omega += (G * net * Math.cos(theta) / inertia() - 1.2 * omega) * h;
+        }
+        theta += omega * h;
+        if (theta >  THMAX) { theta =  THMAX; if (omega > 0) omega = omega >  0.12 ? -0.2 * omega : 0; }
+        if (theta < -THMAX) { theta = -THMAX; if (omega < 0) omega = omega < -0.12 ? -0.2 * omega : 0; }
+      }
+      supportT += (supportsUp ? 1.8 : -2.5) * h;
+      supportT = Math.max(0, Math.min(1, supportT));
+    }
+
+    // ── Geometry helpers ─────────────────────────────────────
+    const w2 = (rx, ry) => {               // plank space → world
+      const c = Math.cos(theta), s = Math.sin(theta);
+      return [PX + rx * c - ry * s, PY + rx * s + ry * c];
+    };
+    const p2 = (mx, my) => {               // world → plank space
+      const c = Math.cos(theta), s = Math.sin(theta);
+      const dx = mx - PX, dy = my - PY;
+      return [dx * c + dy * s, -dx * s + dy * c];
+    };
+    function layout() {                    // stacking: objects pile up at a mark
+      const hh = {}, out = [];
+      let si;
+      for (const o of placed) {
+        const t = TYPES[o.type], k = o.pos.toFixed(2);
+        const base = hh[k] ? hh[k].h : 0;
+        si = hh[k] ? hh[k].n : 0;
+        out.push({ o, t, base, si });
+        hh[k] = { h: base + t.h, n: si + 1 };
+      }
+      return out;
+    }
+    function rr(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+    const inRect = (mx, my, r) => mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+
+    // ── Object art (origin = bottom center, drawn upward) ────
+    function drawBrickStack(n) {
+      for (let i = 0; i < n; i++) {
+        const y0 = -(i + 1) * 17;
+        ctx.fillStyle = '#9aa9b8';
+        ctx.strokeStyle = '#65788c';
+        ctx.lineWidth = 1.2;
+        rr(-23, y0, 46, 16, 2);
+        ctx.fill(); ctx.stroke();
+        const jx = (i % 2 === 0) ? 0 : (i % 4 === 1 ? -11.5 : 11.5);
+        ctx.beginPath();
+        ctx.moveTo(jx, y0 + 1.5); ctx.lineTo(jx, y0 + 14.5);
+        ctx.strokeStyle = 'rgba(80,100,120,0.55)';
+        ctx.lineWidth = 1; ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-21, y0 + 2.5); ctx.lineTo(21, y0 + 2.5);
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.stroke();
+      }
+    }
+    function drawAdult() {
+      const TAU = Math.PI * 2;
+      ctx.fillStyle = '#4d5263';                       // pants
+      rr(-12, -52, 10, 47, 3); ctx.fill();
+      rr(2, -52, 10, 47, 3); ctx.fill();
+      ctx.fillStyle = '#33363f';                       // shoes
+      rr(-16, -7, 15, 7, 2.5); ctx.fill();
+      rr(1, -7, 15, 7, 2.5); ctx.fill();
+      ctx.strokeStyle = '#3f6fb5'; ctx.lineWidth = 7;  // arms
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-14, -86); ctx.lineTo(-19, -58); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(14, -86); ctx.lineTo(19, -58); ctx.stroke();
+      ctx.fillStyle = '#3f6fb5';                       // shirt
+      rr(-15, -95, 30, 45, 7); ctx.fill();
+      ctx.fillStyle = '#f0c8a0';                       // hands, head
+      ctx.beginPath(); ctx.arc(-19, -54, 3.6, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(19, -54, 3.6, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, -106, 11, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#5a4632';                       // hair
+      ctx.beginPath(); ctx.arc(0, -107.5, 11, Math.PI * 1.02, Math.PI * 1.98); ctx.fill();
+    }
+    function drawChild() {
+      const TAU = Math.PI * 2;
+      ctx.fillStyle = '#f0c8a0';                       // lower legs
+      rr(-9, -32, 7, 28, 2.5); ctx.fill();
+      rr(2, -32, 7, 28, 2.5); ctx.fill();
+      ctx.fillStyle = '#33363f';                       // shoes
+      rr(-12, -6, 12, 6, 2); ctx.fill();
+      rr(0, -6, 12, 6, 2); ctx.fill();
+      ctx.fillStyle = '#6b7280';                       // shorts
+      rr(-10, -36, 20, 12, 3); ctx.fill();
+      ctx.strokeStyle = '#58b368'; ctx.lineWidth = 5.5; // arms
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-10, -52); ctx.lineTo(-14, -34); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(10, -52); ctx.lineTo(14, -34); ctx.stroke();
+      ctx.fillStyle = '#58b368';                       // shirt
+      rr(-11, -57, 22, 25, 5); ctx.fill();
+      ctx.fillStyle = '#f0c8a0';                       // hands, head
+      ctx.beginPath(); ctx.arc(-14, -31, 3, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(14, -31, 3, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, -67, 9, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#8a5a2a';                       // hair
+      ctx.beginPath(); ctx.arc(0, -68.5, 9, Math.PI * 1.02, Math.PI * 1.98); ctx.fill();
+    }
+    function drawBox(t) {
+      ctx.fillStyle = t.fill;
+      ctx.strokeStyle = t.dark;
+      ctx.lineWidth = 1.4;
+      rr(-t.w / 2, -t.h, t.w, t.h, 3);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.28)';        // tape band
+      ctx.fillRect(-t.w / 2 + 3, -t.h / 2 - 3, t.w - 6, 6);
+      ctx.fillStyle = '#3c3326';
+      ctx.font = 'bold 13px Segoe UI';
+      ctx.textAlign = 'center';
+      ctx.fillText(t.letter + ' ?', 0, -t.h / 2 + 5);
+    }
+    function drawObj(id) {
+      const t = TYPES[id];
+      if (t.kind === 'brick') drawBrickStack(t.n);
+      else if (t.kind === 'adult') drawAdult();
+      else if (t.kind === 'child') drawChild();
+      else drawBox(t);
+    }
+
+    // ── Scene drawing ────────────────────────────────────────
+    function drawBackground() {
+      const sky = ctx.createLinearGradient(0, 0, 0, GROUND);
+      sky.addColorStop(0, '#cfe9f9');
+      sky.addColorStop(1, '#eef8fd');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, GROUND);
+      // Clouds (fixed, decorative)
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      for (const [cx, cy, s] of [[120, 58, 1], [438, 40, 0.8]]) {
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 34 * s, 13 * s, 0, 0, Math.PI * 2);
+        ctx.ellipse(cx + 24 * s, cy + 4 * s, 24 * s, 10 * s, 0, 0, Math.PI * 2);
+        ctx.ellipse(cx - 26 * s, cy + 5 * s, 20 * s, 9 * s, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Ground
+      const g = ctx.createLinearGradient(0, GROUND, 0, H);
+      g.addColorStop(0, '#76b96b');
+      g.addColorStop(1, '#5aa251');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, GROUND, W, H - GROUND);
+      ctx.strokeStyle = '#4f9347';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(W, GROUND); ctx.stroke();
+    }
+    function drawColumns() {
+      if (supportT <= 0) return;
+      const e = supportT * supportT * (3 - 2 * supportT);   // smoothstep
+      const drop = (1 - e) * 130;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, W, GROUND); ctx.clip();
+      for (const sgn of [-1, 1]) {
+        const x = PX + sgn * COL_RX;
+        const top = PY + drop;
+        const h = GROUND - PY + 130;
+        ctx.fillStyle = '#b9c4d0';
+        ctx.strokeStyle = '#7e8b99';
+        ctx.lineWidth = 1.3;
+        rr(x - COL_W / 2, top, COL_W, h, 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillRect(x - COL_W / 2 + 3, top + 3, 4, h - 6);
+        ctx.fillStyle = '#9fadbb';                          // cap
+        rr(x - COL_W / 2 - 5, top, COL_W + 10, 7, 2); ctx.fill(); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    function drawFulcrum() {
+      ctx.beginPath();
+      ctx.moveTo(PX, PY - 2);
+      ctx.lineTo(PX - 40, GROUND);
+      ctx.lineTo(PX + 40, GROUND);
+      ctx.closePath();
+      ctx.fillStyle = '#6e7a88';
+      ctx.fill();
+      ctx.strokeStyle = '#4d5763';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    function drawGauge() {
+      const cx = PX, cy = 372, r = 19, TAU = Math.PI * 2;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU);
+      ctx.fillStyle = '#fdfdf8'; ctx.fill();
+      ctx.strokeStyle = '#4d5763'; ctx.lineWidth = 1.5; ctx.stroke();
+      for (const a of [-THMAX, 0, THMAX]) {
+        const ux = Math.sin(a), uy = -Math.cos(a);
+        ctx.beginPath();
+        ctx.moveTo(cx + ux * (r - 1), cy + uy * (r - 1));
+        ctx.lineTo(cx + ux * (r - 6), cy + uy * (r - 6));
+        ctx.strokeStyle = a === 0 ? '#2f9e44' : '#99a3ad';
+        ctx.lineWidth = a === 0 ? 2 : 1.5;
+        ctx.stroke();
+      }
+      const level = Math.abs(theta) < 0.007;
+      const ux = Math.sin(theta), uy = -Math.cos(theta);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + ux * (r - 5), cy + uy * (r - 5));
+      ctx.strokeStyle = level ? '#2f9e44' : '#d9534f';
+      ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, 2.6, 0, TAU);
+      ctx.fillStyle = '#4d5763'; ctx.fill();
+    }
+    function drawPlank(items) {
+      ctx.save();
+      ctx.translate(PX, PY);
+      ctx.rotate(theta);
+      // Board
+      if (ui.pos === 'rulers') {
+        ctx.fillStyle = '#f0e6c2';
+        ctx.strokeStyle = '#b1a06b';
+      } else {
+        ctx.fillStyle = '#c08a4e';
+        ctx.strokeStyle = '#8a5e2e';
+      }
+      ctx.lineWidth = 1.4;
+      rr(-HALF, -PT, 2 * HALF, PT, 3);
+      ctx.fill(); ctx.stroke();
+      if (ui.pos === 'rulers') {
+        // Ruler: ticks every 0.25 m, numbers reading outward, "Meters" each side
+        ctx.strokeStyle = '#7a6a3a';
+        ctx.lineWidth = 1;
+        for (let i = -8; i <= 8; i++) {
+          const x = i * SNAP * S;
+          ctx.beginPath();
+          ctx.moveTo(x, -PT + 1);
+          ctx.lineTo(x, -PT + (i % 4 === 0 ? 8 : 5));
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#5a4c20';
+        ctx.font = '8px Segoe UI';
+        ctx.textAlign = 'center';
+        for (let i = 1; i <= 8; i++) {
+          const v = i * SNAP;
+          ctx.fillText(String(v), -v * S, -10);
+          ctx.fillText(String(v),  v * S, -10);
+        }
+        ctx.font = 'italic 8.5px Segoe UI';
+        ctx.fillText('Meters', -HALF / 2, -1.5);
+        ctx.fillText('Meters',  HALF / 2, -1.5);
+      } else if (ui.pos === 'marks') {
+        ctx.strokeStyle = 'rgba(90,55,20,0.6)';
+        for (let i = -8; i <= 8; i++) {
+          if (i === 0) continue;
+          const x = i * SNAP * S;
+          ctx.beginPath();
+          ctx.moveTo(x, -PT + 3);
+          ctx.lineTo(x, -3);
+          ctx.lineWidth = (i % 4 === 0) ? 2.4 : 1.1;
+          ctx.stroke();
+        }
+      } else {
+        ctx.strokeStyle = 'rgba(120,80,40,0.35)';
+        ctx.lineWidth = 1;
+        for (const gy of [-17, -8]) {
+          ctx.beginPath();
+          ctx.moveTo(-HALF + 8, gy);
+          ctx.lineTo(HALF - 8, gy);
+          ctx.stroke();
+        }
+      }
+      // Snap ghost while dragging
+      if (drag && snapPos !== null) {
+        ctx.fillStyle = 'rgba(60,140,240,0.4)';
+        rr(snapPos * S - 5, -PT - 5, 10, PT + 10, 3);
+        ctx.fill();
+      }
+      // Objects riding the plank
+      for (const it of items) {
+        ctx.save();
+        ctx.translate(it.o.pos * S, -PT - it.base);
+        drawObj(it.o.type);
+        ctx.restore();
+      }
+      ctx.restore();
+      // Pivot bolt
+      ctx.beginPath();
+      ctx.arc(PX, PY - PT / 2 * Math.cos(theta), 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#4d5763';
+      ctx.fill();
+    }
+    function drawForces(items) {
+      for (const it of items) {
+        const [wx0, wy] = w2(it.o.pos * S, -PT - it.base);
+        const off = it.si === 0 ? 0 : (it.si % 2 ? -1 : 1) * Math.ceil(it.si / 2) * 6;
+        const wx = wx0 + off;
+        const L = Math.min(16 + it.t.mass * 1.15, 110);
+        ctx.strokeStyle = 'rgba(40,90,220,0.85)';
+        ctx.fillStyle = 'rgba(40,90,220,0.85)';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(wx, wy + 3);
+        ctx.lineTo(wx, wy + 3 + L - 8);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(wx, wy + 3 + L);
+        ctx.lineTo(wx - 6, wy + 3 + L - 10);
+        ctx.lineTo(wx + 6, wy + 3 + L - 10);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    function drawMassLabels(items) {
+      ctx.font = 'bold 11px Segoe UI';
+      ctx.textAlign = 'center';
+      for (const it of items) {
+        const [wx, wy] = w2(it.o.pos * S, -PT - it.base - it.t.h);
+        const txt = it.t.kind === 'box' ? '?' : it.t.label;
+        const tw = ctx.measureText(txt).width + 10;
+        ctx.fillStyle = 'rgba(255,255,255,0.88)';
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+        ctx.lineWidth = 1;
+        rr(wx - tw / 2, wy - 22, tw, 16, 4);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#333';
+        ctx.fillText(txt, wx, wy - 10);
+      }
+    }
+    function drawToggle() {
+      rr(TOG.x, TOG.y, TOG.w, TOG.h, 8);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = '#aab4bd'; ctx.lineWidth = 1.3; ctx.stroke();
+      // Active-half highlight
+      const hx = supportsUp ? TOG.x + 3 : TOG.x + TOG.w / 2 + 1;
+      rr(hx, TOG.y + 3, TOG.w / 2 - 4, TOG.h - 6, 6);
+      ctx.fillStyle = '#d9efd9'; ctx.fill();
+      ctx.strokeStyle = '#43a047'; ctx.lineWidth = 1.3; ctx.stroke();
+      // Left icon: plank resting on two columns
+      let cx = TOG.x + TOG.w / 4, cy = TOG.y + TOG.h / 2;
+      ctx.strokeStyle = '#555e66'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(cx - 16, cy - 4); ctx.lineTo(cx + 16, cy - 4); ctx.stroke();
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(cx - 10, cy - 3); ctx.lineTo(cx - 10, cy + 8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + 10, cy - 3); ctx.lineTo(cx + 10, cy + 8); ctx.stroke();
+      // Right icon: tilted plank on a fulcrum
+      cx = TOG.x + 3 * TOG.w / 4;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx - 16, cy + 3); ctx.lineTo(cx + 16, cy - 9);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 3); ctx.lineTo(cx - 5, cy + 8); ctx.lineTo(cx + 5, cy + 8);
+      ctx.closePath();
+      ctx.fillStyle = '#555e66'; ctx.fill();
+    }
+    function drawKit() {
+      kitRects = [];
+      rr(KITP.x, KITP.y, KITP.w, KITP.h, 9);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1.2; ctx.stroke();
+      const pg = PAGES[page];
+      ctx.fillStyle = '#334';
+      ctx.font = 'bold 12.5px Segoe UI';
+      ctx.textAlign = 'center';
+      ctx.fillText(pg.title, KITP.x + KITP.w / 2, KITP.y + 18);
+      ctx.font = '9.5px Segoe UI';
+      if (page === 0) {
+        const cells = [
+          [KITP.x + 40, KITP.y + 70], [KITP.x + 106, KITP.y + 70],
+          [KITP.x + 40, KITP.y + 122], [KITP.x + 106, KITP.y + 122],
+        ];
+        pg.items.forEach((id, i) => {
+          const [cx, by] = cells[i], t = TYPES[id], s = 0.5;
+          ctx.save(); ctx.translate(cx, by); ctx.scale(s, s); drawObj(id); ctx.restore();
+          ctx.fillStyle = '#556';
+          ctx.fillText(t.label, cx, by + 11);
+          kitRects.push({ x: cx - 19, y: by - t.h * s - 6, w: 38, h: t.h * s + 20, type: id });
+        });
+      } else {
+        // People row
+        const people = [['adult', KITP.x + 45], ['child', KITP.x + 102]];
+        for (const [id, cx] of people) {
+          const t = TYPES[id], s = 0.42, by = KITP.y + 80;
+          ctx.save(); ctx.translate(cx, by); ctx.scale(s, s); drawObj(id); ctx.restore();
+          ctx.fillStyle = '#556';
+          ctx.fillText(t.label, cx, by + 11);
+          kitRects.push({ x: cx - 15, y: by - t.h * s - 6, w: 30, h: t.h * s + 20, type: id });
+        }
+        // Mystery row
+        const boxes = ['mA', 'mB', 'mC', 'mD'];
+        boxes.forEach((id, i) => {
+          const t = TYPES[id], s = 0.55, cx = KITP.x + 24 + i * 33, by = KITP.y + 124;
+          ctx.save(); ctx.translate(cx, by); ctx.scale(s, s); drawObj(id); ctx.restore();
+          ctx.fillStyle = '#556';
+          ctx.fillText(t.letter, cx, by + 11);
+          kitRects.push({ x: cx - 14, y: by - t.h * s - 6, w: 28, h: t.h * s + 20, type: id });
+        });
+      }
+      // Page flip button
+      const btn = { x: KITP.x + 33, y: KITP.y + 138, w: 80, h: 17, btn: 'page' };
+      rr(btn.x, btn.y, btn.w, btn.h, 5);
+      ctx.fillStyle = '#eef3f7'; ctx.fill();
+      ctx.strokeStyle = '#aab4bd'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = '#456';
+      ctx.font = '10px Segoe UI';
+      ctx.fillText(page === 0 ? 'More ▸' : '◂ Bricks', btn.x + btn.w / 2, btn.y + 12);
+      kitRects.push(btn);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      drawBackground();
+      drawColumns();
+      drawFulcrum();
+      if (ui.level) drawGauge();
+      const items = layout();
+      drawPlank(items);
+      if (ui.forces) drawForces(items);
+      if (ui.labels) drawMassLabels(items);
+      if (!init.clean) {
+        drawToggle();
+        drawKit();
+        if (!hintDone) {
+          ctx.fillStyle = '#93aabb';
+          ctx.font = '13px Segoe UI';
+          ctx.textAlign = 'center';
+          ctx.fillText('Drag bricks onto the plank', 300, 38);
+        }
+      }
+      if (drag) {
+        ctx.save();
+        ctx.globalAlpha = 0.9;
+        ctx.translate(drag.mx, drag.my + TYPES[drag.type].h / 2);
+        drawObj(drag.type);
+        ctx.restore();
+      }
+    }
+
+    // ── Animation loop ───────────────────────────────────────
+    let lastTs = null, acc = 0;
+    const SUB = 1 / 240;
+    function frame(ts) {
+      if (lastTs === null) lastTs = ts;
+      const dt = Math.min((ts - lastTs) / 1000, 0.05);
+      lastTs = ts;
+      acc += dt;
+      while (acc > SUB) { step(SUB); acc -= SUB; }
+      draw();
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    // ── Interaction (pointer events: mouse + touch) ──────────
+    const cpos = e => {
+      const r = canvas.getBoundingClientRect();
+      return [e.clientX - r.left, e.clientY - r.top];
+    };
+    function updateSnap() {
+      snapPos = null;
+      if (!drag) return;
+      const [rx, ry] = p2(drag.mx, drag.my);
+      if (Math.abs(rx) <= HALF + 30 && ry > -170 && ry < 70) {
+        let p = Math.round(rx / S / SNAP) * SNAP;
+        if (p === 0) p = rx >= 0 ? SNAP : -SNAP;
+        snapPos = Math.max(-XMAX, Math.min(XMAX, p));
+      }
+    }
+    function hitPlaced(mx, my) {
+      const items = layout();
+      const [rx, ry] = p2(mx, my);
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        const x0 = it.o.pos * S - it.t.w / 2, y1 = -PT - it.base, y0 = y1 - it.t.h;
+        if (rx >= x0 - 4 && rx <= x0 + it.t.w + 4 && ry >= y0 - 4 && ry <= y1 + 4) return it;
+      }
+      return null;
+    }
+    canvas.addEventListener('pointerdown', e => {
+      if (drag) return;
+      const [mx, my] = cpos(e);
+      canvas.setPointerCapture(e.pointerId);
+      if (!init.clean) {
+        if (inRect(mx, my, TOG)) { supportsUp = !supportsUp; return; }
+        for (const r of kitRects) {
+          if (inRect(mx, my, r)) {
+            if (r.btn === 'page') { page = 1 - page; return; }
+            drag = { type: r.type, mx, my };
+            updateSnap();
+            return;
+          }
+        }
+      }
+      const it = hitPlaced(mx, my);
+      if (it) {
+        placed.splice(placed.indexOf(it.o), 1);
+        drag = { type: it.o.type, mx, my };
+        updateSnap();
+      }
+    });
+    canvas.addEventListener('pointermove', e => {
+      const [mx, my] = cpos(e);
+      if (drag) {
+        drag.mx = mx; drag.my = my;
+        updateSnap();
+        canvas.style.cursor = 'grabbing';
+        return;
+      }
+      let hov = hitPlaced(mx, my) !== null;
+      if (!init.clean) {
+        hov = hov || inRect(mx, my, TOG) || kitRects.some(r => inRect(mx, my, r));
+      }
+      canvas.style.cursor = hov ? 'grab' : 'default';
+    });
+    function endDrag() {
+      if (!drag) return;
+      if (snapPos !== null) {
+        placed.push({ type: drag.type, pos: snapPos });
+        hintDone = true;
+      }
+      drag = null;
+      snapPos = null;
+    }
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+  })();
+  </script>
+</body>
+</html>
