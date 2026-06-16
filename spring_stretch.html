@@ -345,7 +345,19 @@
       } else {
         mass.cx = clamp(mx - drag.dx, 16, W - 16);
         mass.topY = clamp(my - drag.dy, 6, H - 40);
-        drag.snap = findSnap(mass);
+        // Connect on contact: the instant the dragged mass reaches the spring's
+        // hook, attach it and keep dragging — no need to release first. The
+        // next move flows into the attached branch above, so you can pull the
+        // spring straight down while still holding the mass. Dragging sideways
+        // past DETACH_DX still unhooks it, exactly as before.
+        const si = findSnap(mass);
+        if (si >= 0) {
+          attach(si, drag.i);
+          drag.pull = 0;
+          drag.snap = -1;
+        } else {
+          drag.snap = si;
+        }
       }
     }
   });
