@@ -614,6 +614,32 @@
     unstretchedY() { return ANCHOR_Y + L0 * PXCM; },
     PXCM, ANCHOR_Y, L0,
     pause(p) { paused = !!p; },
+    // Deterministic capture: set the sim to the exact physics state at time t
+    // (seconds) after releasing the 100 g mass from rest at the natural length.
+    // Closed-form damped-oscillator solution; pauses the sim so the canvas stays
+    // frozen until the next setState or pause(false) call.
+    setState(t) {
+      const s = springs[0], m = masses[0];
+      if (s.massIdx < 0) { s.massIdx = 0; m.attached = 0; hintDone = true; }
+      paused = true;
+      const eq = m.m * G / s.k;
+      const w0 = Math.sqrt(s.k / m.m);
+      const alpha = DAMP / 2;
+      const wd = Math.sqrt(w0 * w0 - alpha * alpha);
+      const decay = Math.exp(-alpha * t);
+      // x = ext - eq satisfies ẍ = -w0²x - DAMP·ẋ, x(0) = -eq, ẋ(0) = 0
+      s.ext = eq * (1 - decay * (Math.cos(wd * t) + (alpha / wd) * Math.sin(wd * t)));
+      s.v   = eq * w0 * w0 / wd * decay * Math.sin(wd * t);
+      m.vy = 0;
+      sync(); draw();
+    },
+    // Damped period T_d = 2π / ω_d (seconds)
+    period() {
+      const s = springs[0], m = masses[0];
+      const w0 = Math.sqrt(s.k / m.m);
+      const alpha = DAMP / 2;
+      return 2 * Math.PI / Math.sqrt(w0 * w0 - alpha * alpha);
+    },
   };
 
   resetAll();
