@@ -7,7 +7,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 700px; height: 500px; overflow: hidden;
+      width: 700px; height: 470px; overflow: hidden;
       background: #f5f5f5;
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none; -webkit-user-select: none;
@@ -16,7 +16,7 @@
   </style>
 </head>
 <body>
-<canvas id="c" width="700" height="500"></canvas>
+<canvas id="c" width="700" height="470"></canvas>
 <script>
 // EigenNode auto-height v2.4
 (function() {
@@ -72,7 +72,7 @@
   'use strict';
 
   // ── Design constants (all layout in 700×500 design units) ──────────────
-  const W = 700, H = 500;
+  const W = 700, H = 470;
   const PXCM = 4.2;                 // canvas px per simulated cm
   const ANCHOR_Y = 32;              // springs hang from here (bar bottom)
   const L0 = 50;                    // natural length of each spring, cm
@@ -91,34 +91,29 @@
   const SNAP_R = 34;                // px hook-snap radius
   const MIN_EXT = -0.42;            // m, max compression (spring >= 8 cm long)
 
-  // ── URL parameters: ?k1=<N/m>&k2=<N/m>&slow=1 ──────────────────────────
+  // ── URL parameter: ?k1=<N/m> (spring constant) ─────────────────────────
   const qs = new URLSearchParams(location.search);
   const parseK = name => {
     const v = parseFloat(qs.get(name));
     return isFinite(v) ? Math.min(K_MAX, Math.max(K_MIN, v)) : K_DEFAULT;
   };
-  const K1_INIT = parseK('k1'), K2_INIT = parseK('k2');
-  const SLOW_INIT = qs.get('slow') === '1';
+  const K1_INIT = parseK('k1');
 
   // ── Scene objects ───────────────────────────────────────────────────────
+  // One spring, centered: this lesson (I2P02 "Measuring a Spring's Stretch")
+  // measures how far a single spring stretches under a known mass.
   const springs = [
-    { x: 165, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
-    { x: 345, k: K2_INIT, ext: 0, v: 0, massIdx: -1 },
+    { x: 255, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
   ];
 
-  // Mystery masses (values hidden in the UI — see build notes):
-  // teal = 75 g, violet = 150 g, orange = 200 g.
+  // Only the 100 g cylinder — the single mass this lesson measures (settles at
+  // exactly 14.70 cm at the default k).
   const massDefs = [
-    { m: 0.250, label: '250 g' },
     { m: 0.100, label: '100 g' },
-    { m: 0.050, label: '50 g' },
-    { m: 0.075, label: '?', colors: ['#56c4b2', '#1e7c6d'] },
-    { m: 0.150, label: '?', colors: ['#b693e0', '#6e4d9e'] },
-    { m: 0.200, label: '?', colors: ['#f4ab63', '#c26a1e'] },
   ];
   const masses = [];
   {
-    let xCursor = 66;
+    let xCursor = 240;          // single weight, parked under the spring
     for (const def of massDefs) {
       const r = 14.5 * Math.cbrt(def.m / 0.1);
       const h = 2.1 * r;
@@ -133,29 +128,20 @@
   }
 
   // ── UI state ────────────────────────────────────────────────────────────
-  const checks = { unstretched: false, resting: false, movable: false };
-  let movY = 340;
+  const checks = { unstretched: false, resting: false };
   const ruler = { x: 8, y: 54 };
   const RUL_W = 38, RUL_LEN = 90 * PXCM, RUL_H = RUL_LEN + 12;
-  let slowMode = SLOW_INIT, paused = false, hintDone = false;
+  let paused = false, hintDone = false;
   let drag = null;
 
   // ── Control geometry ────────────────────────────────────────────────────
-  const P1 = { x: 452, y: 12, w: 240, h: 96 };
+  const P1 = { x: 452, y: 12, w: 240, h: 70 };
   const ROWS = [
     { key: 'unstretched', label: 'Unstretched Length', color: '#3a6fd8', y: 34 },
     { key: 'resting',     label: 'Resting Position',   color: '#2e9e44', y: 60 },
-    { key: 'movable',     label: 'Movable Line',       color: '#d23b3b', y: 86 },
   ];
-  const P2 = { x: 452, y: 116, w: 240, h: 122 };
-  const SLIDERS = [
-    { name: 'Spring 1 Strength', titleY: 140, ty: 160 },
-    { name: 'Spring 2 Strength', titleY: 194, ty: 214 },
-  ];
-  const TRACK_X = 470, TRACK_W = 190;
-  const RADIO_N = { x: 140, y: 481 }, RADIO_S = { x: 228, y: 481 };
-  const PAUSE = { x: 308, y: 481, r: 13 };
-  const RESET = { x: 664, y: 474, r: 15 };
+  const PAUSE = { x: 600, y: 432, r: 13 };
+  const RESET = { x: 652, y: 432, r: 15 };
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -165,7 +151,6 @@
   const extFromEndY = ey => ((ey - ANCHOR_Y) / PXCM - L0) / 100;
   const floorExt = mass => ((FLOOR_Y - HOOK_H - mass.h - ANCHOR_Y) / PXCM - L0) / 100;
   const eqExt = s => (s.massIdx >= 0 ? masses[s.massIdx].m * G / s.k : 0);
-  const thumbX = k => TRACK_X + (k - K_MIN) / (K_MAX - K_MIN) * TRACK_W;
 
   function rr(x, y, w, h, r) {
     ctx.beginPath();
@@ -187,7 +172,7 @@
   let scale = 1, dpr = 1;
   function fit() {
     const vw = window.innerWidth || W;
-    let s = clamp(vw / W, 0.6, 2.2);
+    let s = clamp(vw / W, 0.3, 2.4);          // scale to the frame: small frame -> small sim, big frame -> big sim
     if (Math.abs(s - 1) < 0.03) s = 1;
     scale = s;
     dpr = window.devicePixelRatio || 1;
@@ -235,7 +220,7 @@
 
   // keep attached masses glued to their spring's end
   function sync() {
-    for (let si = 0; si < 2; si++) {
+    for (let si = 0; si < springs.length; si++) {
       const s = springs[si];
       if (s.massIdx >= 0) {
         const mass = masses[s.massIdx];
@@ -255,7 +240,7 @@
   }
 
   function findSnap(mass) {
-    for (let si = 0; si < 2; si++) {
+    for (let si = 0; si < springs.length; si++) {
       const s = springs[si];
       if (s.massIdx >= 0) continue;
       if (dist(mass.cx, mass.topY + 2, s.x, springEndY(s)) < SNAP_R) return si;
@@ -266,16 +251,16 @@
   // ── Reset ───────────────────────────────────────────────────────────────
   function resetAll() {
     drag = null;
-    springs[0].k = K1_INIT; springs[1].k = K2_INIT;
+    springs[0].k = K1_INIT;
     for (const s of springs) { s.ext = 0; s.v = 0; s.massIdx = -1; }
     for (const mass of masses) {
       mass.cx = mass.homeCx;
       mass.topY = FLOOR_Y - HOOK_H - mass.h;
       mass.vy = 0; mass.attached = -1;
     }
-    checks.unstretched = checks.resting = checks.movable = false;
-    movY = 340; ruler.x = 8; ruler.y = 54;
-    slowMode = SLOW_INIT; paused = false; hintDone = false;
+    checks.unstretched = checks.resting = false;
+    ruler.x = 8; ruler.y = 54;
+    paused = false; hintDone = false;
   }
 
   // ── Hit testing ─────────────────────────────────────────────────────────
@@ -297,13 +282,6 @@
     }
     return -1;
   }
-  const hitLineKnob = (mx, my) => checks.movable && inRect(mx, my, 432, movY - 11, 26, 22);
-  const hitLineBody = (mx, my) => checks.movable && Math.abs(my - movY) < 8 && mx >= 56 && mx <= 456;
-
-  function setKFromX(i, mx) {
-    springs[i].k = K_MIN + clamp((mx - TRACK_X) / TRACK_W, 0, 1) * (K_MAX - K_MIN);
-  }
-
   // ── Pointer events ──────────────────────────────────────────────────────
   const toLocal = e => {
     const r = canvas.getBoundingClientRect();
@@ -317,22 +295,12 @@
 
     if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3) { resetAll(); return; }
     if (dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) { paused = !paused; return; }
-    if (inRect(mx, my, RADIO_N.x - 12, RADIO_N.y - 13, 86, 26)) { slowMode = false; return; }
-    if (inRect(mx, my, RADIO_S.x - 12, RADIO_S.y - 13, 72, 26)) { slowMode = true; return; }
     for (const row of ROWS) {
       if (inRect(mx, my, P1.x + 6, row.y - 12, P1.w - 12, 24)) {
         checks[row.key] = !checks[row.key];
         return;
       }
     }
-    for (let i = 0; i < 2; i++) {
-      if (inRect(mx, my, TRACK_X - 10, SLIDERS[i].ty - 13, TRACK_W + 20, 26)) {
-        drag = { type: 'slider', i };
-        setKFromX(i, mx);
-        return;
-      }
-    }
-    if (hitLineKnob(mx, my)) { drag = { type: 'line', dy: my - movY }; return; }
     const mi = massHit(mx, my);
     if (mi >= 0) {
       const mass = masses[mi];
@@ -341,7 +309,6 @@
       drag = { type: 'mass', i: mi, dx: mx - mass.cx, dy: my - mass.topY, pull: 0, snap: -1 };
       return;
     }
-    if (hitLineBody(mx, my)) { drag = { type: 'line', dy: my - movY }; return; }
     if (inRect(mx, my, ruler.x, ruler.y, RUL_W, RUL_H)) {
       drag = { type: 'ruler', dx: mx - ruler.x, dy: my - ruler.y };
       return;
@@ -351,9 +318,7 @@
   canvas.addEventListener('pointermove', e => {
     const [mx, my] = toLocal(e);
     if (!drag) { updateCursor(mx, my); return; }
-    canvas.style.cursor = drag.type === 'slider' ? 'pointer' : 'grabbing';
-    if (drag.type === 'slider') { setKFromX(drag.i, mx); return; }
-    if (drag.type === 'line') { movY = clamp(my - drag.dy, 40, 466); return; }
+    canvas.style.cursor = 'grabbing';
     if (drag.type === 'ruler') {
       ruler.x = clamp(mx - drag.dx, -RUL_W + 16, W - 16);
       ruler.y = clamp(my - drag.dy, -RUL_H + 30, H - 30);
@@ -404,18 +369,12 @@
   function updateCursor(mx, my) {
     let c = 'default';
     if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3 ||
-        dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3 ||
-        inRect(mx, my, RADIO_N.x - 12, RADIO_N.y - 13, 86, 26) ||
-        inRect(mx, my, RADIO_S.x - 12, RADIO_S.y - 13, 72, 26)) c = 'pointer';
+        dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) c = 'pointer';
     else {
       let done = false;
       for (const row of ROWS) {
         if (inRect(mx, my, P1.x + 6, row.y - 12, P1.w - 12, 24)) { c = 'pointer'; done = true; break; }
       }
-      for (let i = 0; i < 2 && !done; i++) {
-        if (inRect(mx, my, TRACK_X - 10, SLIDERS[i].ty - 13, TRACK_W + 20, 26)) { c = 'pointer'; done = true; }
-      }
-      if (!done && (hitLineKnob(mx, my) || hitLineBody(mx, my))) { c = 'grab'; done = true; }
       if (!done && massHit(mx, my) >= 0) { c = 'grab'; done = true; }
       if (!done && inRect(mx, my, ruler.x, ruler.y, RUL_W, RUL_H)) { c = 'grab'; done = true; }
     }
@@ -432,12 +391,6 @@
     ctx.fillStyle = 'rgba(60,40,20,0.6)';
     for (const sx of [120, 390]) {
       ctx.beginPath(); ctx.arc(sx, 23, 2.5, 0, 2 * Math.PI); ctx.fill();
-    }
-    for (let i = 0; i < 2; i++) {
-      ctx.beginPath(); ctx.arc(springs[i].x - 28, 23, 8, 0, 2 * Math.PI);
-      ctx.fillStyle = '#5a6b7d'; ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Segoe UI'; ctx.textAlign = 'center';
-      ctx.fillText(String(i + 1), springs[i].x - 28, 26.5);
     }
     g = ctx.createLinearGradient(0, FLOOR_Y, 0, FLOOR_Y + 10);
     g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
@@ -488,19 +441,6 @@
     ctx.strokeStyle = '#5f7d9e'; ctx.lineWidth = 2; ctx.stroke();
   }
 
-  function drawMovableLine() {
-    if (!checks.movable) return;
-    ctx.save();
-    ctx.setLineDash([8, 6]); ctx.strokeStyle = '#d23b3b'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(60, movY); ctx.lineTo(434, movY); ctx.stroke();
-    ctx.restore();
-    rr(434, movY - 8, 20, 16, 4);
-    ctx.fillStyle = '#d23b3b'; ctx.fill();
-    ctx.strokeStyle = '#9e2424'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    for (const oy of [-3, 0, 3]) ctx.fillRect(439, movY + oy - 0.8, 10, 1.6);
-  }
-
   function drawRuler() {
     const x = ruler.x, y = ruler.y;
     ctx.save();
@@ -511,20 +451,21 @@
     ctx.restore();
     rr(x, y, RUL_W, RUL_H, 3);
     ctx.strokeStyle = '#b9a868'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = '#5d5132'; ctx.strokeStyle = '#5d5132'; ctx.textAlign = 'left';
+    const right = x + RUL_W;                 // measuring edge + markings on the RIGHT
+    ctx.fillStyle = '#5d5132'; ctx.strokeStyle = '#5d5132'; ctx.textAlign = 'right';
     for (let cm = 0; cm <= 90; cm++) {       // 0 cm is exactly the ruler's top edge
       const ty = y + cm * PXCM;
       const len = (cm % 10 === 0) ? 13 : (cm % 5 === 0) ? 9.5 : 6;
-      ctx.beginPath(); ctx.moveTo(x, ty); ctx.lineTo(x + len, ty);
+      ctx.beginPath(); ctx.moveTo(right, ty); ctx.lineTo(right - len, ty);
       ctx.lineWidth = (cm % 10 === 0) ? 1.2 : 0.7;
       ctx.stroke();
       if (cm % 10 === 0) {
         ctx.font = '8.5px Segoe UI';
-        ctx.fillText(String(cm), x + 16, Math.max(ty + 3, y + 8));
+        ctx.fillText(String(cm), right - 16, Math.max(ty + 3, y + 8));
       }
     }
     ctx.font = 'italic 8.5px Segoe UI';
-    ctx.fillText('cm', x + 16, y + RUL_H - 4);
+    ctx.fillText('cm', right - 16, y + RUL_H - 4);
   }
 
   function drawMass(mass, dragged) {
@@ -568,7 +509,7 @@
   }
 
   function drawPanels() {
-    for (const p of [P1, P2]) {
+    for (const p of [P1]) {
       rr(p.x, p.y, p.w, p.h, 8);
       ctx.fillStyle = 'rgba(255,255,255,0.93)'; ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1; ctx.stroke();
@@ -591,41 +532,9 @@
       ctx.beginPath(); ctx.moveTo(648, row.y); ctx.lineTo(682, row.y); ctx.stroke();
       ctx.restore();
     }
-    for (let i = 0; i < 2; i++) {
-      const sl = SLIDERS[i], ty = sl.ty;
-      ctx.fillStyle = '#2c3540'; ctx.font = 'bold 11px Segoe UI'; ctx.textAlign = 'left';
-      ctx.fillText(sl.name, TRACK_X, sl.titleY);
-      const nx = thumbX(K_DEFAULT);            // calibrated-default notch
-      ctx.fillStyle = '#b8c2cc';
-      ctx.beginPath();
-      ctx.moveTo(nx, ty + 6); ctx.lineTo(nx - 3.5, ty + 12); ctx.lineTo(nx + 3.5, ty + 12);
-      ctx.closePath(); ctx.fill();
-      rr(TRACK_X, ty - 2, TRACK_W, 4, 2); ctx.fillStyle = '#cdd5dc'; ctx.fill();
-      const tx = thumbX(springs[i].k);
-      if (tx - TRACK_X > 4) { rr(TRACK_X, ty - 2, tx - TRACK_X, 4, 2); ctx.fillStyle = '#8fb0d4'; ctx.fill(); }
-      rr(tx - 5, ty - 10, 10, 20, 4);
-      ctx.fillStyle = '#3a78c2'; ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.stroke();
-      ctx.fillStyle = '#8893a0'; ctx.font = '9px Segoe UI';
-      ctx.textAlign = 'left'; ctx.fillText('Small', TRACK_X, ty + 22);
-      ctx.textAlign = 'right'; ctx.fillText('Large', TRACK_X + TRACK_W, ty + 22);
-    }
   }
 
   function drawTimeControls() {
-    const radio = (cx, cy, on, label) => {
-      ctx.beginPath(); ctx.arc(cx, cy, 7, 0, 2 * Math.PI);
-      ctx.fillStyle = '#fff'; ctx.fill();
-      ctx.strokeStyle = '#98a2ac'; ctx.lineWidth = 1.2; ctx.stroke();
-      if (on) {
-        ctx.beginPath(); ctx.arc(cx, cy, 3.6, 0, 2 * Math.PI);
-        ctx.fillStyle = '#3a78c2'; ctx.fill();
-      }
-      ctx.fillStyle = '#2c3540'; ctx.font = '11.5px Segoe UI'; ctx.textAlign = 'left';
-      ctx.fillText(label, cx + 12, cy + 4);
-    };
-    radio(RADIO_N.x, RADIO_N.y, !slowMode, 'Normal');
-    radio(RADIO_S.x, RADIO_S.y, slowMode, 'Slow');
     ctx.beginPath(); ctx.arc(PAUSE.x, PAUSE.y, PAUSE.r, 0, 2 * Math.PI);
     ctx.fillStyle = '#3a78c2'; ctx.fill();
     ctx.strokeStyle = '#2c5f9e'; ctx.lineWidth = 1.5; ctx.stroke();
@@ -656,14 +565,8 @@
     ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, W, H);
 
     drawBarAndShelf();
-    if (!hintDone) {
-      ctx.fillStyle = '#a9b6c2'; ctx.font = '12px Segoe UI'; ctx.textAlign = 'center';
-      ctx.fillText('Drag a cylinder onto a spring hook', 252, 96);
-    }
     drawRefLines();
     drawSpring(springs[0]);
-    drawSpring(springs[1]);
-    drawMovableLine();
     drawRuler();
     for (const i of massDrawOrder()) {
       drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
@@ -681,7 +584,7 @@
     const dt = Math.min((ts - lastTs) / 1000, 0.05);
     lastTs = ts;
     if (!paused) {
-      acc += dt * (slowMode ? SLOW_FACTOR : 1);
+      acc += dt;
       if (acc > 0.25) acc = 0.25;
       while (acc >= DT) { step(DT); acc -= DT; }
     }
@@ -689,6 +592,29 @@
     draw();
     requestAnimationFrame(frame);
   }
+
+  // ── Capture hooks (tools/capture/spring.js drives these to record the GIFs
+  //    deterministically; harmless in normal use) ──────────────────────────
+  window.__cap = {
+    // attach the 100 g cylinder to the spring, displaced `displaceCm` from its
+    // resting position (negative = lifted up) so it then oscillates
+    attach(displaceCm) {
+      const s = springs[0], m = masses[0];
+      s.massIdx = 0; m.attached = 0;
+      const eq = m.m * G / s.k;
+      s.ext = eq + (displaceCm || 0) / 100;
+      s.v = 0; m.vy = 0; hintDone = true;
+      sync();
+    },
+    settle() { this.attach(0); springs[0].v = 0; },     // hang still at 14.70 cm
+    ruler(rx, ry) { ruler.x = rx; ruler.y = ry; },
+    checks(u, r) { checks.unstretched = !!u; checks.resting = !!r; },
+    // y of the Unstretched-Length line, so a capture can park the ruler's 10 cm
+    // mark exactly on it: ruler.y = unstretchedY - 10*PXCM
+    unstretchedY() { return ANCHOR_Y + L0 * PXCM; },
+    PXCM, ANCHOR_Y, L0,
+    pause(p) { paused = !!p; },
+  };
 
   resetAll();
   fit();
