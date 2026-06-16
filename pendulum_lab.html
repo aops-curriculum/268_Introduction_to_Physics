@@ -200,7 +200,7 @@
         paused: qflag('paused'),
         theta: qnum('angle', 0, -170, 170) * Math.PI / 180,
         omega: 0,
-        tools: { stopwatch: qflag('stopwatch'), ruler: qflag('ruler'), timer: qflag('timer') },
+        tools: { stopwatch: qflag('stopwatch') || qflag('swfixed'), ruler: qflag('ruler'), timer: qflag('timer') },
         pos: {                              // tool card top-left corners
           stopwatch: { x: 14, y: 386 },     // lower-left, per the lesson script
           timer:     { x: 14, y: 88 },
@@ -210,11 +210,20 @@
       };
     }
     const CLEAN = qflag('clean');           // hide hint + playback chrome for captures
+    // ── Extra capture / embed options ────────────────────────
+    const MARKS = qflag('marks');           // short blue segments at the amplitude turning points
+    const arcRaw = Q.get('arc');            // static degree protractor (number = radius, px)
+    const STATIC_PROT = qflag('protractor') || (arcRaw !== null && arcRaw !== '');
+    const PROT_STATIC_R = (arcRaw !== null && arcRaw !== '' && !isNaN(parseFloat(arcRaw)))
+      ? Math.min(240, Math.max(60, parseFloat(arcRaw))) : 140;
+    const NOSLOW = qflag('noslow');         // hide the slow-motion / normal speed radios
+    const SWFIXED = qflag('swfixed');       // stopwatch always on, no checkbox
 
     // ── State ────────────────────────────────────────────────
     let S;                 // mutable sim state
     let simAcc = 0;        // substep accumulator
     let hintDismissed = false;
+    let ampDeg = 0;        // current oscillation amplitude (deg) — drives the blue marks
     // period timer measurement
     let ptSign = 0, ptT0 = NaN, ptVal = NaN, ptSimT = 0;
     // dragging
@@ -251,11 +260,16 @@
 
     function applyReset() {
       S = initialState();
+      ampDeg = Math.abs(S.theta * 180 / Math.PI);   // marks appear at the load amplitude
       simAcc = 0; ptSimT = 0; drag = null;
       resetPeriodTimer();
       syncUI();
     }
     applyReset();
+    if (SWFIXED) {                          // always-on stopwatch: drop the checkbox
+      const swLab = cbStopwatch.closest('label');
+      if (swLab) swLab.style.display = 'none';
+    }
 
     // ── Panel events ─────────────────────────────────────────
     function setLength(v) {
@@ -302,6 +316,7 @@
       if (drag && drag.kind === 'bob') return;   // bob held: dynamics frozen, clocks run
       const h = H_SUB;
       const pth = S.theta;
+      const pom = S.omega;
       const k1 = deriv(S.theta, S.omega);
       const k2 = deriv(S.theta + 0.5 * h * k1[0], S.omega + 0.5 * h * k1[1]);
       const k3 = deriv(S.theta + 0.5 * h * k2[0], S.omega + 0.5 * h * k2[1]);
@@ -316,6 +331,11 @@
           if (ptSign === 0) { ptSign = dir; ptT0 = tc; }
           else if (dir === ptSign) { ptVal = tc - ptT0; ptT0 = tc; }
         }
+      }
+      // highest-point pass (omega sign flip): refresh the amplitude the marks show,
+      // so they track the true turning angle (and decay correctly under friction).
+      if (pom * S.omega < 0 && Math.abs(S.theta) > 0.02) {
+        ampDeg = Math.abs(S.theta * 180 / Math.PI);
       }
     }
     function advance(dt) {
@@ -430,6 +450,53 @@
       ctx.font = 'bold 15px Segoe UI'; ctx.fillStyle = '#1a4a7a';
       ctx.fillText((degNow >= 0 ? '' : '−') + Math.abs(degNow).toFixed(1) + '°',
         PIV.x, PIV.y + PROT_R + 34);
+      ctx.restore();
+    }
+
+    // Always-on degree protractor (ticks + labels only) — `?protractor=1` / `?arc=R`.
+    // Black ticks every 5°, longer + labelled every 15°, on a large easy-to-count arc.
+    function drawStaticProtractor() {
+      const R = PROT_STATIC_R;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(PIV.x, PIV.y, R, 0, Math.PI);          // downward-bulging lower-half arc
+      ctx.strokeStyle = 'rgba(30,36,44,0.7)'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.fillStyle = '#23282f'; ctx.font = (R >= 180 ? '11px' : '9px') + ' Segoe UI';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let a = -90; a <= 90; a += 5) {
+        const rad = a * Math.PI / 180;
+        const sx = Math.sin(rad), cy = Math.cos(rad);
+        const len = (a % 45 === 0) ? 16 : (a % 15 === 0) ? 12 : 7;
+        ctx.beginPath();
+        ctx.moveTo(PIV.x + (R - len) * sx, PIV.y + (R - len) * cy);
+        ctx.lineTo(PIV.x + R * sx, PIV.y + R * cy);
+        ctx.strokeStyle = 'rgba(30,36,44,0.82)';
+        ctx.lineWidth = (a % 15 === 0) ? 1.6 : 1;
+        ctx.stroke();
+        if (a % 15 === 0) {
+          ctx.fillText(String(Math.abs(a)) + '°',
+            PIV.x + (R + 14) * sx, PIV.y + (R + 14) * cy);
+        }
+      }
+      ctx.restore();
+    }
+
+    // Short blue segments marking the oscillation bounds (the amplitude), hanging in
+    // space over the degree ticks — `?marks=1`. ampDeg tracks the turning points.
+    function drawMarks() {
+      if (ampDeg < 0.2) return;
+      const rOuter = STATIC_PROT ? PROT_STATIC_R : 140;
+      const rInner = rOuter - 24;
+      ctx.save();
+      ctx.strokeStyle = '#1f4fd6'; ctx.lineWidth = 3.4; ctx.lineCap = 'round';
+      for (const sgn of [-1, 1]) {
+        const rad = sgn * ampDeg * Math.PI / 180;
+        const sx = Math.sin(rad), cy = Math.cos(rad);
+        ctx.beginPath();
+        ctx.moveTo(PIV.x + rInner * sx, PIV.y + rInner * cy);
+        ctx.lineTo(PIV.x + rOuter * sx, PIV.y + rOuter * cy);
+        ctx.stroke();
+      }
       ctx.restore();
     }
 
@@ -568,8 +635,10 @@
         ctx.fillStyle = '#46586a'; ctx.font = '11px Segoe UI'; ctx.textAlign = 'left';
         ctx.fillText(label, r.cx + r.r + 4, r.cy + 0.5);
       };
-      radio(CL.rNorm, !S.slow, 'Normal');
-      radio(CL.rSlow, S.slow, 'Slow motion');
+      if (!NOSLOW) {
+        radio(CL.rNorm, !S.slow, 'Normal');
+        radio(CL.rSlow, S.slow, 'Slow motion');
+      }
       // pause / play
       const pb = CL.pause;
       ctx.beginPath(); ctx.arc(pb.cx, pb.cy, pb.r, 0, Math.PI * 2);
@@ -608,7 +677,9 @@
       ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
       drawMount();
+      if (STATIC_PROT) drawStaticProtractor();
       if (drag && drag.kind === 'bob') drawProtractor();
+      if (MARKS) drawMarks();
       drawPendulum();
 
       if (!hintDismissed && !CLEAN && Math.abs(S.theta) < 1e-6 && Math.abs(S.omega) < 1e-6) {
@@ -649,10 +720,12 @@
         if (inRect(mx, my, CL.stop.x, CL.stop.y, CL.stop.w, CL.stop.h)) return 'btnStop';
         if (inCircle(mx, my, CL.pause)) return 'btnPause';
         if (inCircle(mx, my, CL.step)) return 'btnStep';
-        if (Math.hypot(mx - CL.rNorm.cx, my - CL.rNorm.cy) < 9 ||
-            (mx > CL.rNorm.cx && mx < CL.rNorm.cx + 56 && Math.abs(my - CL.rNorm.cy) < 9)) return 'btnNorm';
-        if (Math.hypot(mx - CL.rSlow.cx, my - CL.rSlow.cy) < 9 ||
-            (mx > CL.rSlow.cx && mx < CL.rSlow.cx + 88 && Math.abs(my - CL.rSlow.cy) < 9)) return 'btnSlow';
+        if (!NOSLOW) {
+          if (Math.hypot(mx - CL.rNorm.cx, my - CL.rNorm.cy) < 9 ||
+              (mx > CL.rNorm.cx && mx < CL.rNorm.cx + 56 && Math.abs(my - CL.rNorm.cy) < 9)) return 'btnNorm';
+          if (Math.hypot(mx - CL.rSlow.cx, my - CL.rSlow.cy) < 9 ||
+              (mx > CL.rSlow.cx && mx < CL.rSlow.cx + 88 && Math.abs(my - CL.rSlow.cy) < 9)) return 'btnSlow';
+        }
       }
       // stopwatch buttons, then card
       if (S.tools.stopwatch) {
@@ -675,6 +748,7 @@
       deg = Math.max(-170, Math.min(170, deg));
       S.theta = deg * Math.PI / 180;
       S.omega = 0;
+      ampDeg = Math.abs(deg);           // preview the marks at the held angle
     }
 
     canvas.addEventListener('pointerdown', e => {
@@ -729,6 +803,7 @@
       if (drag && drag.kind === 'bob') {
         S.omega = 0;
         if (Math.abs(S.theta) < 0.0044) S.theta = 0;   // < 0.25 deg: settle to rest
+        ampDeg = Math.abs(S.theta * 180 / Math.PI);     // lock marks to the release angle
         resetPeriodTimer();
       }
       drag = null;
