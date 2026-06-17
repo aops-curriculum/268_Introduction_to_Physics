@@ -50,20 +50,16 @@
   const K1_INIT = parseK('k1');
 
   // ── Scene objects ───────────────────────────────────────────────────────
-  // One spring, centered: this lesson (I2P02 "Measuring a Spring's Stretch")
-  // measures how far a single spring stretches under a known mass.
   const springs = [
     { x: 255, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
   ];
 
-  // Only the 100 g cylinder — the single mass this lesson measures (settles at
-  // exactly 14.70 cm at the default k).
   const massDefs = [
     { m: 0.100, label: '100 g' },
   ];
   const masses = [];
   {
-    let xCursor = 240;          // single weight, parked under the spring
+    let xCursor = 240;
     for (const def of massDefs) {
       const r = 14.5 * Math.cbrt(def.m / 0.1);
       const h = 2.1 * r;
@@ -78,18 +74,12 @@
   }
 
   // ── UI state ────────────────────────────────────────────────────────────
-  const checks = { unstretched: false, resting: false };
   const ruler = { x: 8, y: 54 };
   const RUL_W = 38, RUL_LEN = 90 * PXCM, RUL_H = RUL_LEN + 12;
   let paused = false, hintDone = false;
   let drag = null;
 
   // ── Control geometry ────────────────────────────────────────────────────
-  const P1 = { x: 452, y: 12, w: 240, h: 70 };
-  const ROWS = [
-    { key: 'unstretched', label: 'Unstretched Length', color: '#3a6fd8', y: 34 },
-    { key: 'resting',     label: 'Resting Position',   color: '#2e9e44', y: 60 },
-  ];
   const PAUSE = { x: 600, y: 432, r: 13 };
   const RESET = { x: 652, y: 432, r: 15 };
 
@@ -100,7 +90,6 @@
   const springEndY = s => ANCHOR_Y + (L0 + s.ext * 100) * PXCM;
   const extFromEndY = ey => ((ey - ANCHOR_Y) / PXCM - L0) / 100;
   const floorExt = mass => ((FLOOR_Y - HOOK_H - mass.h - ANCHOR_Y) / PXCM - L0) / 100;
-  const eqExt = s => (s.massIdx >= 0 ? masses[s.massIdx].m * G / s.k : 0);
 
   function rr(x, y, w, h, r) {
     ctx.beginPath();
@@ -113,16 +102,12 @@
   }
 
   // ── Canvas + scale-to-iframe-width ──────────────────────────────────────
-  // Design size is 700×500. The classroom passes this sim first in a 600-wide
-  // iframe and later in a 1500-wide one ("We could get better results if we
-  // made the entire simulation bigger"), so the whole scene scales with the
-  // viewport width. Height is reported by the auto-height snippet above.
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
   let scale = 1, dpr = 1;
   function fit() {
     const vw = window.innerWidth || W;
-    let s = clamp(vw / W, 0.3, 2.4);          // scale to the frame: small frame -> small sim, big frame -> big sim
+    let s = clamp(vw / W, 0.3, 2.4);
     if (Math.abs(s - 1) < 0.03) s = 1;
     scale = s;
     dpr = window.devicePixelRatio || 1;
@@ -145,30 +130,27 @@
         s.v += a * dt;
         s.ext += s.v * dt;
         const fe = floorExt(mass);
-        if (s.ext > fe) { s.ext = fe; if (s.v > 0) s.v = 0; }   // mass rests on shelf
+        if (s.ext > fe) { s.ext = fe; if (s.v > 0) s.v = 0; }
         if (s.ext < MIN_EXT) { s.ext = MIN_EXT; if (s.v < 0) s.v = 0; }
       } else if (s.massIdx < 0 && s.ext !== 0) {
-        // empty spring eases back to natural length
         s.ext *= Math.exp(-10 * dt);
         if (Math.abs(s.ext) < 2e-4) s.ext = 0;
         s.v = 0;
       }
     }
-    // free masses fall to the shelf
     for (let i = 0; i < masses.length; i++) {
       const mass = masses[i];
       if (mass.attached >= 0) continue;
       if (drag && drag.type === 'mass' && drag.i === i) continue;
       const floorTop = FLOOR_Y - HOOK_H - mass.h;
       if (mass.topY < floorTop) {
-        mass.vy += G * 100 * PXCM * dt;       // 9.8 m/s² in design px/s²
+        mass.vy += G * 100 * PXCM * dt;
         mass.topY += mass.vy * dt;
         if (mass.topY >= floorTop) { mass.topY = floorTop; mass.vy = 0; }
       } else { mass.topY = floorTop; mass.vy = 0; }
     }
   }
 
-  // keep attached masses glued to their spring's end
   function sync() {
     for (let si = 0; si < springs.length; si++) {
       const s = springs[si];
@@ -208,7 +190,6 @@
       mass.topY = FLOOR_Y - HOOK_H - mass.h;
       mass.vy = 0; mass.attached = -1;
     }
-    checks.unstretched = checks.resting = false;
     ruler.x = 8; ruler.y = 54;
     paused = false; hintDone = false;
   }
@@ -232,6 +213,7 @@
     }
     return -1;
   }
+
   // ── Pointer events ──────────────────────────────────────────────────────
   const toLocal = e => {
     const r = canvas.getBoundingClientRect();
@@ -239,22 +221,16 @@
   };
 
   canvas.addEventListener('pointerdown', e => {
-    if (drag) return;                       // single active pointer
+    if (drag) return;
     const [mx, my] = toLocal(e);
     canvas.setPointerCapture(e.pointerId);
 
     if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3) { resetAll(); return; }
     if (dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) { paused = !paused; return; }
-    for (const row of ROWS) {
-      if (inRect(mx, my, P1.x + 6, row.y - 12, P1.w - 12, 24)) {
-        checks[row.key] = !checks[row.key];
-        return;
-      }
-    }
     const mi = massHit(mx, my);
     if (mi >= 0) {
       const mass = masses[mi];
-      if (mass.attached >= 0) springs[mass.attached].v = 0;   // grabbing stops it
+      if (mass.attached >= 0) springs[mass.attached].v = 0;
       mass.vy = 0;
       drag = { type: 'mass', i: mi, dx: mx - mass.cx, dy: my - mass.topY, pull: 0, snap: -1 };
       return;
@@ -280,7 +256,6 @@
         const s = springs[mass.attached];
         const desiredCx = mx - drag.dx;
         if (Math.abs(desiredCx - s.x) > DETACH_DX) {
-          // pulled sideways off the hook
           s.massIdx = -1; s.v = 0;
           mass.attached = -1;
           mass.cx = clamp(desiredCx, 16, W - 16);
@@ -295,11 +270,6 @@
       } else {
         mass.cx = clamp(mx - drag.dx, 16, W - 16);
         mass.topY = clamp(my - drag.dy, 6, H - 40);
-        // Connect on contact: the instant the dragged mass reaches the spring's
-        // hook, attach it and keep dragging — no need to release first. The
-        // next move flows into the attached branch above, so you can pull the
-        // spring straight down while still holding the mass. Dragging sideways
-        // past DETACH_DX still unhooks it, exactly as before.
         const si = findSnap(mass);
         if (si >= 0) {
           attach(si, drag.i);
@@ -319,9 +289,8 @@
       if (mass.attached < 0) {
         const si = findSnap(mass);
         if (si >= 0) attach(si, drag.i);
-        else mass.cx = clamp(mass.cx, 70, 430);   // dropped masses land on the shelf
+        else mass.cx = clamp(mass.cx, 70, 430);
       }
-      // releasing an attached mass: v is already 0 — it oscillates from here
     }
     drag = null;
   }
@@ -332,14 +301,8 @@
     let c = 'default';
     if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3 ||
         dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) c = 'pointer';
-    else {
-      let done = false;
-      for (const row of ROWS) {
-        if (inRect(mx, my, P1.x + 6, row.y - 12, P1.w - 12, 24)) { c = 'pointer'; done = true; break; }
-      }
-      if (!done && massHit(mx, my) >= 0) { c = 'grab'; done = true; }
-      if (!done && inRect(mx, my, ruler.x, ruler.y, RUL_W, RUL_H)) { c = 'grab'; done = true; }
-    }
+    else if (massHit(mx, my) >= 0) c = 'grab';
+    else if (inRect(mx, my, ruler.x, ruler.y, RUL_W, RUL_H)) c = 'grab';
     canvas.style.cursor = c;
   }
 
@@ -362,23 +325,6 @@
     ctx.fillStyle = '#8a6238';
     ctx.fillRect(74, FLOOR_Y + 10, 12, 8);
     ctx.fillRect(406, FLOOR_Y + 10, 12, 8);
-  }
-
-  function drawRefLines() {
-    ctx.save();
-    if (checks.unstretched) {
-      const y = ANCHOR_Y + L0 * PXCM;
-      ctx.setLineDash([7, 5]); ctx.strokeStyle = '#3a6fd8'; ctx.lineWidth = 1.8;
-      ctx.beginPath(); ctx.moveTo(108, y); ctx.lineTo(402, y); ctx.stroke();
-    }
-    if (checks.resting) {
-      ctx.setLineDash([5, 4]); ctx.strokeStyle = '#2e9e44'; ctx.lineWidth = 2;
-      for (const s of springs) {
-        const y = ANCHOR_Y + (L0 + eqExt(s) * 100) * PXCM;
-        ctx.beginPath(); ctx.moveTo(s.x - 52, y); ctx.lineTo(s.x + 52, y); ctx.stroke();
-      }
-    }
-    ctx.restore();
   }
 
   function drawSpring(s) {
@@ -413,9 +359,9 @@
     ctx.restore();
     rr(x, y, RUL_W, RUL_H, 3);
     ctx.strokeStyle = '#b9a868'; ctx.lineWidth = 1; ctx.stroke();
-    const right = x + RUL_W;                 // measuring edge + markings on the RIGHT
+    const right = x + RUL_W;
     ctx.fillStyle = '#5d5132'; ctx.strokeStyle = '#5d5132'; ctx.textAlign = 'right';
-    for (let cm = 0; cm <= 90; cm++) {       // 0 cm is exactly the ruler's top edge
+    for (let cm = 0; cm <= 90; cm++) {
       const ty = y + cm * PXCM;
       const len = (cm % 10 === 0) ? 13 : (cm % 5 === 0) ? 9.5 : 6;
       ctx.beginPath(); ctx.moveTo(right, ty); ctx.lineTo(right - len, ty);
@@ -470,32 +416,6 @@
     ctx.restore();
   }
 
-  function drawPanels() {
-    for (const p of [P1]) {
-      rr(p.x, p.y, p.w, p.h, 8);
-      ctx.fillStyle = 'rgba(255,255,255,0.93)'; ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1; ctx.stroke();
-    }
-    for (const row of ROWS) {
-      const bx = 464, by = row.y - 7;
-      rr(bx, by, 14, 14, 3);
-      ctx.fillStyle = checks[row.key] ? '#3a78c2' : '#fff'; ctx.fill();
-      ctx.strokeStyle = checks[row.key] ? '#2c5f9e' : '#98a2ac'; ctx.lineWidth = 1.2; ctx.stroke();
-      if (checks[row.key]) {
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(bx + 3, by + 7.5); ctx.lineTo(bx + 6, by + 10.5); ctx.lineTo(bx + 11, by + 3.5);
-        ctx.stroke();
-      }
-      ctx.fillStyle = '#2c3540'; ctx.font = '11.5px Segoe UI'; ctx.textAlign = 'left';
-      ctx.fillText(row.label, 486, row.y + 4);
-      ctx.save();
-      ctx.setLineDash([6, 4]); ctx.strokeStyle = row.color; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(648, row.y); ctx.lineTo(682, row.y); ctx.stroke();
-      ctx.restore();
-    }
-  }
-
   function drawTimeControls() {
     ctx.beginPath(); ctx.arc(PAUSE.x, PAUSE.y, PAUSE.r, 0, 2 * Math.PI);
     ctx.fillStyle = '#3a78c2'; ctx.fill();
@@ -527,14 +447,12 @@
     ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, W, H);
 
     drawBarAndShelf();
-    drawRefLines();
     drawSpring(springs[0]);
     drawRuler();
     for (const i of massDrawOrder()) {
       drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
     }
     drawSnapHighlight();
-    drawPanels();
     drawTimeControls();
     drawReset();
   }
@@ -555,11 +473,8 @@
     requestAnimationFrame(frame);
   }
 
-  // ── Capture hooks (tools/capture/spring.js drives these to record the GIFs
-  //    deterministically; harmless in normal use) ──────────────────────────
+  // ── Capture hooks ───────────────────────────────────────────────────────
   window.__cap = {
-    // attach the 100 g cylinder to the spring, displaced `displaceCm` from its
-    // resting position (negative = lifted up) so it then oscillates
     attach(displaceCm) {
       const s = springs[0], m = masses[0];
       s.massIdx = 0; m.attached = 0;
@@ -568,18 +483,11 @@
       s.v = 0; m.vy = 0; hintDone = true;
       sync();
     },
-    settle() { this.attach(0); springs[0].v = 0; },     // hang still at 14.70 cm
+    settle() { this.attach(0); springs[0].v = 0; },
     ruler(rx, ry) { ruler.x = rx; ruler.y = ry; },
-    checks(u, r) { checks.unstretched = !!u; checks.resting = !!r; },
-    // y of the Unstretched-Length line, so a capture can park the ruler's 10 cm
-    // mark exactly on it: ruler.y = unstretchedY - 10*PXCM
     unstretchedY() { return ANCHOR_Y + L0 * PXCM; },
     PXCM, ANCHOR_Y, L0,
     pause(p) { paused = !!p; },
-    // Deterministic capture: set the sim to the exact physics state at time t
-    // (seconds) after releasing the 100 g mass from rest at the natural length.
-    // Closed-form damped-oscillator solution; pauses the sim so the canvas stays
-    // frozen until the next setState or pause(false) call.
     setState(t) {
       const s = springs[0], m = masses[0];
       if (s.massIdx < 0) { s.massIdx = 0; m.attached = 0; hintDone = true; }
@@ -589,13 +497,11 @@
       const alpha = DAMP / 2;
       const wd = Math.sqrt(w0 * w0 - alpha * alpha);
       const decay = Math.exp(-alpha * t);
-      // x = ext - eq satisfies ẍ = -w0²x - DAMP·ẋ, x(0) = -eq, ẋ(0) = 0
       s.ext = eq * (1 - decay * (Math.cos(wd * t) + (alpha / wd) * Math.sin(wd * t)));
       s.v   = eq * w0 * w0 / wd * decay * Math.sin(wd * t);
       m.vy = 0;
       sync(); draw();
     },
-    // Damped period T_d = 2π / ω_d (seconds)
     period() {
       const s = springs[0], m = masses[0];
       const w0 = Math.sqrt(s.k / m.m);
@@ -612,11 +518,6 @@
 <script>
 // EigenNode auto-height v2.5
 (function() {
-  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
-  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
-  // space inside the iframe — AoPS classroom embeds in a narrower column
-  // than the 600px content, so a horizontal scrollbar appears and steals
-  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
   var BUFFER = 4;
   var H_SCROLLBAR = 18;
   var measuring = false;
@@ -625,19 +526,11 @@
     var b = document.body, h = document.documentElement;
     if (!b) return 0;
     measuring = true;
-    // Temporarily neutralise body's height/min-height (overriding stylesheet
-    // rules with !important) so scrollHeight reflects actual content extent.
-    // Without this, patterns like body { height: 100vh } cause scrollHeight
-    // to echo the iframe's current viewport — adding BUFFER each cycle
-    // ratchets the iframe taller forever. Browser doesn't paint until this
-    // synchronous block returns, so no visible flicker.
     var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
     var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
     b.style.setProperty('height', 'auto', 'important');
     b.style.setProperty('min-height', '0', 'important');
     var content = b.scrollHeight || 0;
-    // position:absolute children don't contribute to scrollHeight. Check their
-    // bounding boxes while height:auto is active so we catch them.
     var kids = b.children;
     for (var ki = 0; ki < kids.length; ki++) {
       if ((window.getComputedStyle(kids[ki]).position || '') === 'absolute') {
@@ -651,10 +544,6 @@
     if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
     if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
     measuring = false;
-    // Check the documentElement only — that's the element that owns the
-    // iframe's horizontal scrollbar. Body can be narrower than the iframe
-    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
-    // 1-2px overflow that doesn't actually trigger a scrollbar.
     var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
     return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
   }
