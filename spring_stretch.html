@@ -7,7 +7,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 400px; height: 468px; overflow: hidden;
+      width: 384px; height: 468px; overflow: hidden;
       background: #f5f5f5;
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none; -webkit-user-select: none;
@@ -16,13 +16,13 @@
   </style>
 </head>
 <body>
-<canvas id="c" width="400" height="468"></canvas>
+<canvas id="c" width="384" height="468"></canvas>
 <script>
 (() => {
   'use strict';
 
   // ── Design constants (all layout in 400×468 design units) ──────────────
-  const W = 400, H = 468;
+  const W = 384, H = 468;
   const PXCM = 4.2;                 // canvas px per simulated cm
   const ANCHOR_Y = 32;              // springs hang from here (bar bottom)
   const L0 = 50;                    // natural length of each spring, cm
@@ -51,7 +51,7 @@
 
   // ── Scene objects ───────────────────────────────────────────────────────
   const springs = [
-    { x: 207, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
+    { x: 199, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
   ];
 
   const massDefs = [
@@ -59,7 +59,7 @@
   ];
   const masses = [];
   {
-    let xCursor = 192;
+    let xCursor = 184;
     for (const def of massDefs) {
       const r = 14.5 * Math.cbrt(def.m / 0.1);
       const h = 2.1 * r;
@@ -74,13 +74,13 @@
   }
 
   // ── UI state ────────────────────────────────────────────────────────────
-  const ruler = { x: 26, y: 54 };
+  const ruler = { x: 50, y: 54 };
   const RUL_W = 38, RUL_LEN = 90 * PXCM, RUL_H = RUL_LEN + 12;
   let paused = false, hintDone = false;
   let drag = null;
 
   // ── Control geometry ────────────────────────────────────────────────────
-  const RESET = { x: 372, y: 430, r: 15 };
+  const RESET = { x: 364, y: 430, r: 15 };
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -189,7 +189,7 @@
       mass.topY = FLOOR_Y - HOOK_H - mass.h;
       mass.vy = 0; mass.attached = -1;
     }
-    ruler.x = 26; ruler.y = 54;
+    ruler.x = 50; ruler.y = 54;
     paused = false; hintDone = false;
   }
 
@@ -287,7 +287,7 @@
       if (mass.attached < 0) {
         const si = findSnap(mass);
         if (si >= 0) attach(si, drag.i);
-        else mass.cx = clamp(mass.cx, 24, 374);
+        else mass.cx = clamp(mass.cx, 16, 366);
       }
     }
     drag = null;
@@ -308,20 +308,20 @@
     let g = ctx.createLinearGradient(0, 14, 0, ANCHOR_Y);
     g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
     ctx.fillStyle = g;
-    rr(62, 14, 290, ANCHOR_Y - 14, 3); ctx.fill();
+    rr(54, 14, 290, ANCHOR_Y - 14, 3); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.fillStyle = 'rgba(60,40,20,0.6)';
-    for (const sx of [72, 342]) {
+    for (const sx of [64, 334]) {
       ctx.beginPath(); ctx.arc(sx, 23, 2.5, 0, 2 * Math.PI); ctx.fill();
     }
     g = ctx.createLinearGradient(0, FLOOR_Y, 0, FLOOR_Y + 10);
     g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
     ctx.fillStyle = g;
-    rr(8, FLOOR_Y, 380, 10, 2); ctx.fill();
+    rr(0, FLOOR_Y, 380, 10, 2); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.stroke();
     ctx.fillStyle = '#8a6238';
-    ctx.fillRect(26, FLOOR_Y + 10, 12, 8);
-    ctx.fillRect(358, FLOOR_Y + 10, 12, 8);
+    ctx.fillRect(18, FLOOR_Y + 10, 12, 8);
+    ctx.fillRect(350, FLOOR_Y + 10, 12, 8);
   }
 
   function drawSpring(s) {
