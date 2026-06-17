@@ -77,9 +77,10 @@
     const S = 120;                       // pixels per meter
     const PX = 274, PY = 166;            // pivot (plank bottom center)
     const HALF = 2.2 * S;                // plank half-length (2.2 m)
-    const PT = 24;                       // plank thickness, px
+    const PT = 29;                       // plank thickness, px
+    const BOARD_OFFSET = 38;             // local y of board top (pivot at 0, board hangs below)
     const GROUND = 270;
-    const THMAX = 25 * Math.PI / 180;    // max tilt
+    const THMAX = 12 * Math.PI / 180;    // max tilt
     const SNAP = 0.25, XMAX = 2;         // snap grid (m), arm length (m)
     // Kit panel: centered in canvas, in the sky above the plank
     const KITP = { x: 209, y: 2, w: 130, h: 36 };
@@ -258,7 +259,7 @@
     }
     function drawFulcrum() {
       ctx.beginPath();
-      ctx.moveTo(PX, PY - 2);
+      ctx.moveTo(PX, PY);
       ctx.lineTo(PX - 40, GROUND);
       ctx.lineTo(PX + 40, GROUND);
       ctx.closePath();
@@ -309,6 +310,19 @@
       ctx.save();
       ctx.translate(PX, PY);
       ctx.rotate(theta);
+      // Support beams from ±0.1 m on board top to pivot
+      const bFill   = ui.pos === 'rulers' ? '#f0e6c2' : '#c08a4e';
+      const bStroke = ui.pos === 'rulers' ? '#b1a06b' : '#8a5e2e';
+      ctx.lineCap = 'round';
+      for (const bx of [-0.1 * S, 0.1 * S]) {
+        ctx.strokeStyle = bFill;
+        ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.moveTo(bx, BOARD_OFFSET); ctx.lineTo(0, 0); ctx.stroke();
+        ctx.strokeStyle = bStroke;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(bx, BOARD_OFFSET); ctx.lineTo(0, 0); ctx.stroke();
+      }
+      ctx.lineCap = 'butt';
       // Board
       if (ui.pos === 'rulers') {
         ctx.fillStyle = '#f0e6c2';
@@ -318,7 +332,7 @@
         ctx.strokeStyle = '#8a5e2e';
       }
       ctx.lineWidth = 1.4;
-      rr(-HALF, -PT, 2 * HALF, PT, 3);
+      rr(-HALF, BOARD_OFFSET, 2 * HALF, PT, 3);
       ctx.fill(); ctx.stroke();
       if (ui.pos === 'rulers') {
         // Ruler: ticks every 0.25 m, numbers reading outward, "meters" each side
@@ -327,8 +341,8 @@
         for (let i = -8; i <= 8; i++) {
           const x = i * SNAP * S;
           ctx.beginPath();
-          ctx.moveTo(x, -PT + 1);
-          ctx.lineTo(x, -PT + (i % 4 === 0 ? 8 : 5));
+          ctx.moveTo(x, BOARD_OFFSET + 1);
+          ctx.lineTo(x, BOARD_OFFSET + (i % 4 === 0 ? 8 : 5));
           ctx.stroke();
         }
         ctx.fillStyle = '#5a4c20';
@@ -336,27 +350,27 @@
         ctx.textAlign = 'center';
         for (let i = 1; i <= 8; i++) {
           const v = i * SNAP;
-          ctx.fillText(String(v), -v * S, -5);
-          ctx.fillText(String(v),  v * S, -5);
+          ctx.fillText(String(v), -v * S, BOARD_OFFSET + 14);
+          ctx.fillText(String(v),  v * S, BOARD_OFFSET + 14);
         }
         ctx.font = 'italic 8.5px Segoe UI';
-        ctx.fillText('meters', -HALF / 2, -1.5);
-        ctx.fillText('meters',  HALF / 2, -1.5);
+        ctx.fillText('meters', -HALF / 2, BOARD_OFFSET + PT - 1.5);
+        ctx.fillText('meters',  HALF / 2, BOARD_OFFSET + PT - 1.5);
       } else if (ui.pos === 'marks') {
         ctx.strokeStyle = 'rgba(90,55,20,0.6)';
         for (let i = -8; i <= 8; i++) {
           if (i === 0) continue;
           const x = i * SNAP * S;
           ctx.beginPath();
-          ctx.moveTo(x, -PT + 3);
-          ctx.lineTo(x, -3);
+          ctx.moveTo(x, BOARD_OFFSET + 3);
+          ctx.lineTo(x, BOARD_OFFSET + PT - 3);
           ctx.lineWidth = (i % 4 === 0) ? 2.4 : 1.1;
           ctx.stroke();
         }
       } else {
         ctx.strokeStyle = 'rgba(120,80,40,0.35)';
         ctx.lineWidth = 1;
-        for (const gy of [-17, -8]) {
+        for (const gy of [BOARD_OFFSET + PT - 17, BOARD_OFFSET + PT - 8]) {
           ctx.beginPath();
           ctx.moveTo(-HALF + 8, gy);
           ctx.lineTo(HALF - 8, gy);
@@ -366,26 +380,26 @@
       // Snap ghost while dragging
       if (drag && snapPos !== null) {
         ctx.fillStyle = 'rgba(60,140,240,0.4)';
-        rr(snapPos * S - 5, -PT - 5, 10, PT + 10, 3);
+        rr(snapPos * S - 5, BOARD_OFFSET - 5, 10, PT + 10, 3);
         ctx.fill();
       }
       // Objects riding the plank
       for (const it of items) {
         ctx.save();
-        ctx.translate(it.o.pos * S, -PT - it.base);
+        ctx.translate(it.o.pos * S, BOARD_OFFSET - it.base);
         drawObj(it.o.type);
         ctx.restore();
       }
       ctx.restore();
-      // Pivot bolt
+      // Pivot bolt at fulcrum tip
       ctx.beginPath();
-      ctx.arc(PX, PY - PT / 2 * Math.cos(theta), 3.5, 0, Math.PI * 2);
+      ctx.arc(PX, PY, 5, 0, Math.PI * 2);
       ctx.fillStyle = '#4d5763';
       ctx.fill();
     }
     function drawForces(items) {
       for (const it of items) {
-        const [wx0, wy] = w2(it.o.pos * S, -PT - it.base);
+        const [wx0, wy] = w2(it.o.pos * S, BOARD_OFFSET - it.base);
         const off = it.si === 0 ? 0 : (it.si % 2 ? -1 : 1) * Math.ceil(it.si / 2) * 6;
         const wx = wx0 + off;
         const L = Math.min(16 + it.t.mass * 1.15, 110);
@@ -409,7 +423,7 @@
       ctx.font = 'bold 11px Segoe UI';
       ctx.textAlign = 'center';
       for (const it of items) {
-        const [wx, wy] = w2(it.o.pos * S, -PT - it.base - it.t.h);
+        const [wx, wy] = w2(it.o.pos * S, BOARD_OFFSET - it.base - it.t.h);
         const txt = it.t.label;
         const tw = ctx.measureText(txt).width + 10;
         ctx.fillStyle = 'rgba(255,255,255,0.88)';
@@ -495,7 +509,7 @@
       snapPos = null;
       if (!drag) return;
       const [rx, ry] = p2(drag.mx, drag.my);
-      if (Math.abs(rx) <= HALF + 30 && ry > -170 && ry < 70) {
+      if (Math.abs(rx) <= HALF + 30 && ry > -170 && ry < BOARD_OFFSET + PT + 70) {
         let p = Math.round(rx / S / SNAP) * SNAP;
         if (p === 0) p = rx >= 0 ? SNAP : -SNAP;
         snapPos = Math.max(-XMAX, Math.min(XMAX, p));
@@ -506,7 +520,7 @@
       const [rx, ry] = p2(mx, my);
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
-        const x0 = it.o.pos * S - it.t.w / 2, y1 = -PT - it.base, y0 = y1 - it.t.h;
+        const x0 = it.o.pos * S - it.t.w / 2, y1 = BOARD_OFFSET - it.base, y0 = y1 - it.t.h;
         if (rx >= x0 - 4 && rx <= x0 + it.t.w + 4 && ry >= y0 - 4 && ry <= y1 + 4) return it;
       }
       return null;
