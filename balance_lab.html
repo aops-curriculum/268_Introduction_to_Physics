@@ -185,7 +185,7 @@
     const inRect = (mx, my, r) => mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
 
     // ── Object art ───────────────────────────────────────────
-    function drawBrickStack(n) {
+    function drawBrickStack(n, label) {
       for (let i = 0; i < n; i++) {
         const y0 = -(i + 1) * 17;
         ctx.fillStyle = '#9aa9b8';
@@ -193,19 +193,24 @@
         ctx.lineWidth = 1.2;
         rr(-23, y0, 46, 16, 2);
         ctx.fill(); ctx.stroke();
-        const jx = (i % 2 === 0) ? 0 : (i % 4 === 1 ? -11.5 : 11.5);
-        ctx.beginPath();
-        ctx.moveTo(jx, y0 + 1.5); ctx.lineTo(jx, y0 + 14.5);
-        ctx.strokeStyle = 'rgba(80,100,120,0.55)';
-        ctx.lineWidth = 1; ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(-21, y0 + 2.5); ctx.lineTo(21, y0 + 2.5);
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-        ctx.stroke();
+      }
+      if (label) {
+        const cy = -(n * 17) / 2 - 0.5;
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(60,80,100,0.9)';
+        ctx.strokeText(label, 0, cy);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, 0, cy);
+        ctx.textBaseline = 'alphabetic';
       }
     }
     function drawObj(id) {
-      drawBrickStack(TYPES[id].n);
+      const labels = { b5: 'M\u2081', b10: 'M\u2082' };
+      drawBrickStack(TYPES[id].n, labels[id]);
     }
 
     // ── Scene drawing ────────────────────────────────────────
