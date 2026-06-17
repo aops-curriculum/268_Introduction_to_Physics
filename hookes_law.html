@@ -65,67 +65,10 @@
       user-select: none;
     }
     canvas { display: block; }
-    #panel {
-      width: 800px;
-      padding: 8px 18px 10px;
-      background: #eef1f6;
-      border-top: 1px solid #d7dde7;
-    }
-    .row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
-    .row > label.cap {
-      width: 130px; font-size: 13px; font-weight: 600; color: #3a4757;
-      flex: 0 0 auto;
-    }
-    input[type=range] { width: 300px; accent-color: #5b7fb0; }
-    input[type=number] {
-      width: 64px; padding: 3px 5px; font-size: 13px;
-      border: 1px solid #c3ccda; border-radius: 5px; background: #fff;
-      font-family: inherit; color: #2a3340;
-    }
-    .unit { font-size: 12px; color: #6b7787; }
-    .checks { flex-wrap: wrap; gap: 14px; margin-top: 8px; }
-    .checks label {
-      display: inline-flex; align-items: center; gap: 6px;
-      font-size: 12.5px; color: #3a4757; cursor: pointer;
-    }
-    .checks input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; }
-    .sw { width: 22px; height: 0; border-top: 4px solid #888; border-radius: 2px; display: inline-block; }
-    .sw.applied { border-color: #e8821e; }
-    .sw.spring  { border-color: #2b6fd6; }
-    .sw.disp    { border-color: #1d9e54; }
-    .sw.eq      { border-top-style: dashed; border-color: #1d9e54; }
-    #reset {
-      margin-left: auto; padding: 5px 12px; font-size: 13px; font-family: inherit;
-      border: 1px solid #c3ccda; border-radius: 6px; background: #fff; color: #3a4757;
-      cursor: pointer;
-    }
-    #reset:hover { background: #f7f9fc; }
   </style>
 </head>
 <body>
   <canvas id="c" width="800" height="230"></canvas>
-  <div id="panel">
-    <div class="row">
-      <label class="cap" for="fSlider">Applied Force</label>
-      <input type="range" id="fSlider" min="-100" max="100" step="1" value="0">
-      <input type="number" id="fBox" min="-100" max="100" step="1" value="0">
-      <span class="unit">N</span>
-    </div>
-    <div class="row">
-      <label class="cap" for="kSlider">Spring Constant</label>
-      <input type="range" id="kSlider" min="100" max="1000" step="1" value="200">
-      <input type="number" id="kBox" min="100" max="1000" step="1" value="200">
-      <span class="unit">N/m</span>
-    </div>
-    <div class="row checks">
-      <label><input type="checkbox" id="cApplied"><span class="sw applied"></span>Applied Force</label>
-      <label><input type="checkbox" id="cSpring"><span class="sw spring"></span>Spring Force</label>
-      <label><input type="checkbox" id="cDisp"><span class="sw disp"></span>Displacement</label>
-      <label><input type="checkbox" id="cEq"><span class="sw eq"></span>Equilibrium Position</label>
-      <label><input type="checkbox" id="cValues">Values</label>
-      <button id="reset">&#8634; Reset</button>
-    </div>
-  </div>
 
   <script>
   (() => {
@@ -135,33 +78,22 @@
     const W = 800, H = 230;
 
     // ── Geometry (px) ───────────────────────────────────────
-    const WALL_X   = 56;     // spring anchor (wall face)
-    const AXIS_Y   = 95;     // spring centerline
-    const RAIL_Y   = 145;    // gripper rail
-    const EQ_X     = 350;    // handle x at zero displacement
-    const SCALE    = 230;    // px per metre
-    const MAXLEN   = 110;    // arrow px at 100 N
-    const GRIP_HALF = 11;    // half-width of gripper body
+    const WALL_X    = 56;     // spring anchor (wall face)
+    const AXIS_Y    = 95;     // spring centerline
+    const RAIL_Y    = 145;    // gripper rail
+    const EQ_X      = 350;    // handle x at zero displacement
+    const SCALE     = 230;    // px per metre
+    const MAXLEN    = 110;    // arrow px at 100 N
+    const GRIP_HALF = 11;     // half-width of gripper body
 
-    // Colors
-    const C_APPLIED = '#e8821e';
-    const C_SPRING  = '#2b6fd6';
-    const C_DISP    = '#1d9e54';
-
-    // ── Colors / palette done. State ────────────────────────
-    const DEFAULTS = {
-      k: 200, F: 0,
-      vectors: { applied: false, spring: true, displacement: true, equilibrium: true },
-      values: false
-    };
+    const C_SPRING = '#2b6fd6';
+    const C_DISP   = '#1d9e54';
 
     const state = {
-      k: 200,            // spring constant N/m
-      appliedF: 0,       // applied force N (signed, + = rightward)
-      x: 0,              // animated displacement (m, + = stretched right)
-      v: 0,              // displacement velocity (m/s)
-      show: { applied: false, spring: true, displacement: true, equilibrium: true },
-      values: false,
+      k: 200,
+      appliedF: 0,
+      x: 0,
+      v: 0,
       dragging: false
     };
 
@@ -176,21 +108,6 @@
         const k = parseFloat(p.get('k'));
         if (isFinite(k)) state.k = Math.max(100, Math.min(1000, k));
       }
-      if (p.has('vectors')) {
-        const set = { applied: false, spring: false, displacement: false, equilibrium: false };
-        p.get('vectors').split(',').forEach(t => {
-          t = t.trim().toLowerCase();
-          if (t === 'applied' || t === 'apply') set.applied = true;
-          else if (t === 'spring') set.spring = true;
-          else if (t === 'displacement' || t === 'disp') set.displacement = true;
-          else if (t === 'equilibrium' || t === 'eq') set.equilibrium = true;
-        });
-        state.show = set;
-      }
-      if (p.has('values')) {
-        const v = p.get('values').toLowerCase();
-        state.values = (v === '1' || v === 'true' || v === 'yes');
-      }
       if (p.has('F') || p.has('f')) {
         const f = parseFloat(p.get('F') || p.get('f'));
         if (isFinite(f)) state.appliedF = Math.max(-100, Math.min(100, f));
@@ -199,63 +116,6 @@
       state.x = xTarget();
       state.v = 0;
     }
-
-    // ── Controls wiring ─────────────────────────────────────
-    const fSlider = document.getElementById('fSlider');
-    const fBox    = document.getElementById('fBox');
-    const kSlider = document.getElementById('kSlider');
-    const kBox    = document.getElementById('kBox');
-    const cApplied = document.getElementById('cApplied');
-    const cSpring  = document.getElementById('cSpring');
-    const cDisp    = document.getElementById('cDisp');
-    const cEq      = document.getElementById('cEq');
-    const cValues  = document.getElementById('cValues');
-    const resetBtn = document.getElementById('reset');
-
-    function syncControls() {
-      fSlider.value = Math.round(state.appliedF);
-      fBox.value    = Math.round(state.appliedF);
-      kSlider.value = Math.round(state.k);
-      kBox.value    = Math.round(state.k);
-      cApplied.checked = state.show.applied;
-      cSpring.checked  = state.show.spring;
-      cDisp.checked    = state.show.displacement;
-      cEq.checked      = state.show.equilibrium;
-      cValues.checked  = state.values;
-    }
-
-    function setForce(f) {
-      state.appliedF = Math.max(-100, Math.min(100, Math.round(f)));
-      syncControls();
-    }
-    function setK(k) {
-      state.k = Math.max(100, Math.min(1000, Math.round(k)));
-      // keep applied force fixed; displacement retargets to F/k
-      syncControls();
-    }
-
-    fSlider.addEventListener('input', () => setForce(parseFloat(fSlider.value)));
-    fBox.addEventListener('input', () => { if (fBox.value !== '') setForce(parseFloat(fBox.value)); });
-    fBox.addEventListener('change', () => setForce(parseFloat(fBox.value) || 0));
-    kSlider.addEventListener('input', () => setK(parseFloat(kSlider.value)));
-    kBox.addEventListener('input', () => { if (kBox.value !== '') setK(parseFloat(kBox.value)); });
-    kBox.addEventListener('change', () => setK(parseFloat(kBox.value) || 100));
-
-    cApplied.addEventListener('change', () => state.show.applied = cApplied.checked);
-    cSpring.addEventListener('change',  () => state.show.spring = cSpring.checked);
-    cDisp.addEventListener('change',    () => state.show.displacement = cDisp.checked);
-    cEq.addEventListener('change',      () => state.show.equilibrium = cEq.checked);
-    cValues.addEventListener('change',  () => state.values = cValues.checked);
-
-    resetBtn.addEventListener('click', () => {
-      state.k = DEFAULTS.k;
-      state.appliedF = DEFAULTS.F;
-      state.show = Object.assign({}, DEFAULTS.vectors);
-      state.values = DEFAULTS.values;
-      state.x = xTarget();
-      state.v = 0;
-      syncControls();
-    });
 
     // ── Pointer drag of the gripper ─────────────────────────
     function handleX() { return EQ_X + state.x * SCALE; }
@@ -298,15 +158,13 @@
     canvas.addEventListener('pointercancel', endDrag);
 
     function dragMove(mx) {
-      let xm = (mx - EQ_X) / SCALE;           // metres
+      let xm = (mx - EQ_X) / SCALE;
       xm = clampX(xm);
-      // Applied force snaps to integer newtons (1 N steps, like the control),
-      // so displacement lands on F/k exactly (k=100 -> 0.01 m steps -> 0.1 m = 10 N).
+      // Snap to integer newtons so displacement lands exactly on F/k
       const f = Math.max(-100, Math.min(100, Math.round(state.k * xm)));
       state.appliedF = f;
       state.x = f / state.k;
       state.v = 0;
-      syncControls();
     }
 
     // ── Physics: critically-damped settle to F/k ────────────
@@ -321,7 +179,7 @@
         state.x += state.v * h;
       }
       if (Math.abs(state.x - tx) < 1e-5 && Math.abs(state.v) < 1e-4) {
-        state.x = tx; state.v = 0;     // exact at rest
+        state.x = tx; state.v = 0;
       }
     }
 
@@ -347,13 +205,11 @@
     }
 
     function drawWall() {
-      // anchor block
       const x0 = 32, x1 = WALL_X, y0 = 46, y1 = RAIL_Y + 6;
       const g = ctx.createLinearGradient(x0, 0, x1, 0);
       g.addColorStop(0, '#9aa6b6'); g.addColorStop(1, '#7d8aa0');
       ctx.fillStyle = g;
       ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-      // hatching
       ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.5;
       for (let yy = y0 - 18; yy < y1; yy += 9) {
         ctx.beginPath(); ctx.moveTo(x0, yy + 18); ctx.lineTo(x1, yy); ctx.stroke();
@@ -384,9 +240,8 @@
     function drawSpring(hx) {
       const startX = WALL_X;
       const endX = hx - GRIP_HALF;
-      const len = endX - startX;
       const lead = 14;
-      const coils = Math.round(8 + (state.k - 100) / 900 * 14); // 8..22, denser when stiffer
+      const coils = Math.round(8 + (state.k - 100) / 900 * 14);
       const amp = 14;
       ctx.strokeStyle = '#73797f';
       ctx.lineWidth = 3;
@@ -409,14 +264,11 @@
     }
 
     function drawGripper(hx, hot) {
-      // foot / roller on rail
       ctx.fillStyle = '#566273';
       ctx.beginPath(); ctx.arc(hx, RAIL_Y + 1, 6, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = '#3c4654'; ctx.lineWidth = 1.5; ctx.stroke();
-      // neck
       ctx.fillStyle = '#6b7686';
       ctx.fillRect(hx - 3, AXIS_Y, 6, RAIL_Y - AXIS_Y);
-      // body
       const by0 = AXIS_Y - 26, bh = 40;
       const g = ctx.createLinearGradient(hx - GRIP_HALF, 0, hx + GRIP_HALF, 0);
       g.addColorStop(0, hot ? '#5f7da6' : '#566273');
@@ -425,7 +277,6 @@
       roundRect(hx - GRIP_HALF, by0, GRIP_HALF * 2, bh, 5); ctx.fill();
       ctx.strokeStyle = '#2c3542'; ctx.lineWidth = 1.5;
       roundRect(hx - GRIP_HALF, by0, GRIP_HALF * 2, bh, 5); ctx.stroke();
-      // grab grooves
       ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5;
       for (let i = -1; i <= 1; i++) {
         ctx.beginPath();
@@ -433,20 +284,12 @@
         ctx.lineTo(hx + 5, AXIS_Y - 6 + i * 6);
         ctx.stroke();
       }
-      // jaws clamping the spring end (left side)
       ctx.fillStyle = '#2c3542';
       ctx.beginPath();
       ctx.moveTo(hx - GRIP_HALF, AXIS_Y - 8);
       ctx.lineTo(hx - GRIP_HALF - 7, AXIS_Y);
       ctx.lineTo(hx - GRIP_HALF, AXIS_Y + 8);
       ctx.closePath(); ctx.fill();
-    }
-
-    function fmtN(v) { return (Math.round(Math.abs(v) * 10) / 10).toFixed(1) + ' N'; }
-    function fmtM(v) {
-      const r = Math.round(v * 100) / 100;
-      const s = (r > 0 ? '+' : (r < 0 ? '−' : '')) + Math.abs(r).toFixed(2);
-      return s + ' m';
     }
 
     function label(text, x, y, color, align) {
@@ -463,54 +306,43 @@
       ctx.clearRect(0, 0, W, H);
 
       const hx = handleX();
-      const F = state.k * state.x;           // current spring/applied magnitude basis
+      const F = state.k * state.x;
       const dispMag = Math.abs(state.x) * SCALE;
+      const dir = state.x >= 0 ? 1 : -1;
+      const fLen = Math.min(MAXLEN, Math.abs(F) / 100 * MAXLEN);
 
       // Equilibrium dashed line
-      if (state.show.equilibrium) {
-        ctx.save();
-        ctx.setLineDash([6, 5]); ctx.strokeStyle = C_DISP; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(EQ_X, 44); ctx.lineTo(EQ_X, 206); ctx.stroke();
-        ctx.restore();
-        label('equilibrium', EQ_X, 36, C_DISP);
-      }
+      ctx.save();
+      ctx.setLineDash([6, 5]); ctx.strokeStyle = C_DISP; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(EQ_X, 44); ctx.lineTo(EQ_X, 206); ctx.stroke();
+      ctx.restore();
+      label('equilibrium', EQ_X, 36, C_DISP);
 
       drawWall();
       drawRail();
       drawSpring(hx);
       drawGripper(hx, hovering || state.dragging);
 
-      // Vectors --------------------------------------------------
-      const dir = state.x >= 0 ? 1 : -1;       // displacement direction (right=+)
-      const fLen = Math.min(MAXLEN, Math.abs(F) / 100 * MAXLEN);
-
-      // Applied force (orange): same direction as displacement, magnitude |F|
-      if (state.show.applied && Math.abs(F) > 0.05) {
-        const y = AXIS_Y - 40;
-        arrow(hx, y, hx + dir * fLen, y, C_APPLIED, 4);
-        if (state.values) label('F = ' + fmtN(F), hx + dir * fLen + dir * 4, y - 12,
-                                 C_APPLIED, dir > 0 ? 'left' : 'right');
-      }
-
-      // Spring force (blue): opposite to displacement (restoring)
-      if (state.show.spring && Math.abs(F) > 0.05) {
+      // Spring force (blue): opposite to displacement, label moves with arrow
+      if (Math.abs(F) > 0.05) {
         const y = RAIL_Y + 26;
-        arrow(hx, y, hx - dir * fLen, y, C_SPRING, 4);
-        if (state.values) label('F = ' + fmtN(F), hx - dir * fLen - dir * 4, y - 12,
-                                 C_SPRING, dir > 0 ? 'right' : 'left');
+        const tipX = hx - dir * fLen;
+        arrow(hx, y, tipX, y, C_SPRING, 4);
+        label('spring force', (hx + tipX) / 2, y - 16, C_SPRING);
       }
 
-      // Displacement (green): from equilibrium to handle
-      if (state.show.displacement && dispMag > 0.5) {
+      // Displacement (green): from equilibrium to handle, label moves with arrow
+      if (dispMag > 0.5) {
         const y = RAIL_Y + 52;
-        arrow(EQ_X, y, EQ_X + dir * dispMag, y, C_DISP, 4);
-        if (state.values) label('x = ' + fmtM(state.x), (EQ_X + hx) / 2, y - 12, C_DISP);
+        const tipX = EQ_X + dir * dispMag;
+        arrow(EQ_X, y, tipX, y, C_DISP, 4);
+        label('displacement', (EQ_X + tipX) / 2, y - 16, C_DISP);
       }
 
       // Hint
       ctx.font = '12px "Segoe UI", system-ui, sans-serif';
       ctx.fillStyle = '#9aa6b6'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-      ctx.fillText('Drag the handle ↔ or use the Applied Force slider', W / 2, 18);
+      ctx.fillText('Drag the handle ↔ to stretch or compress the spring', W / 2, 18);
     }
 
     // ── Loop ────────────────────────────────────────────────
@@ -525,7 +357,6 @@
     }
 
     applyParams();
-    syncControls();
     requestAnimationFrame(frame);
   })();
   </script>
