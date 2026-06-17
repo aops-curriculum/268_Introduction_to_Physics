@@ -113,13 +113,11 @@
     // ── Layout / geometry ────────────────────────────────────
     const S = 120;                       // pixels per meter
     const PX = 300, PY = 308;            // pivot (plank bottom center)
-    const HALF = 2 * S;                  // plank half-length (2 m)
+    const HALF = 2.2 * S;                // plank half-length (2.2 m, so the "2" label prints fully)
     const PT = 24;                       // plank thickness, px
     const GROUND = 412;
     const THMAX = 25 * Math.PI / 180;    // max tilt
     const SNAP = 0.25, XMAX = 2;         // snap grid (m), arm length (m)
-    const COL_RX = 210, COL_W = 26;      // support columns at ±1.75 m
-    const TOG = { x: 140, y: 390, w: 120, h: 34 };
     const KITP = { x: 444, y: 10, w: 146, h: 158 };
 
     // ── Object kit ───────────────────────────────────────────
@@ -142,7 +140,7 @@
     ];
 
     // ── URL parameters ───────────────────────────────────────
-    // supports=up|down  rulers=1|0  position=none|rulers|marks  labels=1|0
+    // rulers=1|0  position=none|rulers|marks  labels=1|0
     // forces=1|0  level=1|0  page=1|2  clean=1  place=<item>@<pos>,...
     //   items: 5,10,15,20,adult,child,a,b,c,d ; pos in meters, negative=left
     const Q = new URLSearchParams(location.search);
@@ -157,9 +155,7 @@
       if (qBool('rulers', true)) pos0 = 'rulers';
       else if (pos0 === 'rulers') pos0 = 'none';
     }
-    const sv = (Q.get('supports') || 'up').toLowerCase();
     const init = {
-      supportsUp: !(sv === 'down' || sv === '0' || sv === 'off' || sv === 'removed'),
       pos: pos0,
       labels: qBool('labels', true),
       forces: qBool('forces', false),
@@ -187,8 +183,6 @@
 
     // ── State ────────────────────────────────────────────────
     let placed = [];                 // [{type, pos}] in stacking order
-    let supportsUp = true;           // toggle target
-    let supportT = 1;                // 1 = columns fully up, 0 = removed
     let theta = 0, omega = 0;        // plank angle (rad, + = right side down)
     let page = 0;
     let hintDone = false;
@@ -214,8 +208,6 @@
     }
     function reset() {
       placed = init.placed.map(o => ({ type: o.type, pos: o.pos }));
-      supportsUp = init.supportsUp;
-      supportT = supportsUp ? 1 : 0;
       theta = 0; omega = 0;
       ui.labels = init.labels; ui.forces = init.forces;
       ui.level = init.level;   ui.pos = init.pos;
@@ -236,25 +228,16 @@
     const inertia   = () => placed.reduce((I, o) => I + TYPES[o.type].mass * o.pos * o.pos, I_PLANK);
 
     function step(h) {
-      if (supportsUp || supportT > 0.001) {
-        // Columns present (or still animating): plank driven firmly level.
-        omega += (-120 * theta - 22 * omega) * h;
-        theta += omega * h;
-        if (Math.abs(theta) < 1e-4 && Math.abs(omega) < 1e-3) { theta = 0; omega = 0; }
+      const net = netMoment();
+      if (net === 0) {
+        // Exactly balanced (or empty): gently return to (and hold) level.
+        omega += (-8 * theta - 5.7 * omega) * h;
       } else {
-        const net = netMoment();
-        if (net === 0) {
-          // Exactly balanced: gently return to (and hold) level.
-          omega += (-8 * theta - 5.7 * omega) * h;
-        } else {
-          omega += (G * net * Math.cos(theta) / inertia() - 1.2 * omega) * h;
-        }
-        theta += omega * h;
-        if (theta >  THMAX) { theta =  THMAX; if (omega > 0) omega = omega >  0.12 ? -0.2 * omega : 0; }
-        if (theta < -THMAX) { theta = -THMAX; if (omega < 0) omega = omega < -0.12 ? -0.2 * omega : 0; }
+        omega += (G * net * Math.cos(theta) / inertia() - 1.2 * omega) * h;
       }
-      supportT += (supportsUp ? 1.8 : -2.5) * h;
-      supportT = Math.max(0, Math.min(1, supportT));
+      theta += omega * h;
+      if (theta >  THMAX) { theta =  THMAX; if (omega > 0) omega = omega >  0.12 ? -0.2 * omega : 0; }
+      if (theta < -THMAX) { theta = -THMAX; if (omega < 0) omega = omega < -0.12 ? -0.2 * omega : 0; }
     }
 
     // ── Geometry helpers ─────────────────────────────────────
@@ -401,27 +384,6 @@
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(W, GROUND); ctx.stroke();
     }
-    function drawColumns() {
-      if (supportT <= 0) return;
-      const e = supportT * supportT * (3 - 2 * supportT);   // smoothstep
-      const drop = (1 - e) * 130;
-      ctx.save();
-      ctx.beginPath(); ctx.rect(0, 0, W, GROUND); ctx.clip();
-      for (const sgn of [-1, 1]) {
-        const x = PX + sgn * COL_RX;
-        const top = PY + drop;
-        const h = GROUND - PY + 130;
-        ctx.fillStyle = '#b9c4d0';
-        ctx.strokeStyle = '#7e8b99';
-        ctx.lineWidth = 1.3;
-        rr(x - COL_W / 2, top, COL_W, h, 2); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.fillRect(x - COL_W / 2 + 3, top + 3, 4, h - 6);
-        ctx.fillStyle = '#9fadbb';                          // cap
-        rr(x - COL_W / 2 - 5, top, COL_W + 10, 7, 2); ctx.fill(); ctx.stroke();
-      }
-      ctx.restore();
-    }
     function drawFulcrum() {
       ctx.beginPath();
       ctx.moveTo(PX, PY - 2);
@@ -475,7 +437,7 @@
       rr(-HALF, -PT, 2 * HALF, PT, 3);
       ctx.fill(); ctx.stroke();
       if (ui.pos === 'rulers') {
-        // Ruler: ticks every 0.25 m, numbers reading outward, "Meters" each side
+        // Ruler: ticks every 0.25 m, numbers reading outward, "meters" each side
         ctx.strokeStyle = '#7a6a3a';
         ctx.lineWidth = 1;
         for (let i = -8; i <= 8; i++) {
@@ -494,8 +456,8 @@
           ctx.fillText(String(v),  v * S, -10);
         }
         ctx.font = 'italic 8.5px Segoe UI';
-        ctx.fillText('Meters', -HALF / 2, -1.5);
-        ctx.fillText('Meters',  HALF / 2, -1.5);
+        ctx.fillText('meters', -HALF / 2, -1.5);
+        ctx.fillText('meters',  HALF / 2, -1.5);
       } else if (ui.pos === 'marks') {
         ctx.strokeStyle = 'rgba(90,55,20,0.6)';
         for (let i = -8; i <= 8; i++) {
@@ -575,33 +537,6 @@
         ctx.fillText(txt, wx, wy - 10);
       }
     }
-    function drawToggle() {
-      rr(TOG.x, TOG.y, TOG.w, TOG.h, 8);
-      ctx.fillStyle = '#fff'; ctx.fill();
-      ctx.strokeStyle = '#aab4bd'; ctx.lineWidth = 1.3; ctx.stroke();
-      // Active-half highlight
-      const hx = supportsUp ? TOG.x + 3 : TOG.x + TOG.w / 2 + 1;
-      rr(hx, TOG.y + 3, TOG.w / 2 - 4, TOG.h - 6, 6);
-      ctx.fillStyle = '#d9efd9'; ctx.fill();
-      ctx.strokeStyle = '#43a047'; ctx.lineWidth = 1.3; ctx.stroke();
-      // Left icon: plank resting on two columns
-      let cx = TOG.x + TOG.w / 4, cy = TOG.y + TOG.h / 2;
-      ctx.strokeStyle = '#555e66'; ctx.lineWidth = 2; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(cx - 16, cy - 4); ctx.lineTo(cx + 16, cy - 4); ctx.stroke();
-      ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(cx - 10, cy - 3); ctx.lineTo(cx - 10, cy + 8); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + 10, cy - 3); ctx.lineTo(cx + 10, cy + 8); ctx.stroke();
-      // Right icon: tilted plank on a fulcrum
-      cx = TOG.x + 3 * TOG.w / 4;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(cx - 16, cy + 3); ctx.lineTo(cx + 16, cy - 9);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - 3); ctx.lineTo(cx - 5, cy + 8); ctx.lineTo(cx + 5, cy + 8);
-      ctx.closePath();
-      ctx.fillStyle = '#555e66'; ctx.fill();
-    }
     function drawKit() {
       kitRects = [];
       rr(KITP.x, KITP.y, KITP.w, KITP.h, 9);
@@ -659,7 +594,6 @@
     function draw() {
       ctx.clearRect(0, 0, W, H);
       drawBackground();
-      drawColumns();
       drawFulcrum();
       if (ui.level) drawGauge();
       const items = layout();
@@ -667,7 +601,6 @@
       if (ui.forces) drawForces(items);
       if (ui.labels) drawMassLabels(items);
       if (!init.clean) {
-        drawToggle();
         drawKit();
         if (!hintDone) {
           ctx.fillStyle = '#93aabb';
@@ -729,7 +662,6 @@
       const [mx, my] = cpos(e);
       canvas.setPointerCapture(e.pointerId);
       if (!init.clean) {
-        if (inRect(mx, my, TOG)) { supportsUp = !supportsUp; return; }
         for (const r of kitRects) {
           if (inRect(mx, my, r)) {
             if (r.btn === 'page') { page = 1 - page; return; }
@@ -756,7 +688,7 @@
       }
       let hov = hitPlaced(mx, my) !== null;
       if (!init.clean) {
-        hov = hov || inRect(mx, my, TOG) || kitRects.some(r => inRect(mx, my, r));
+        hov = hov || kitRects.some(r => inRect(mx, my, r));
       }
       canvas.style.cursor = hov ? 'grab' : 'default';
     });
