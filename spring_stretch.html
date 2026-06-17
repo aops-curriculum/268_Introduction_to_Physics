@@ -7,7 +7,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 700px; height: 470px; overflow: hidden;
+      width: 400px; height: 468px; overflow: hidden;
       background: #f5f5f5;
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none; -webkit-user-select: none;
@@ -16,13 +16,13 @@
   </style>
 </head>
 <body>
-<canvas id="c" width="700" height="470"></canvas>
+<canvas id="c" width="400" height="468"></canvas>
 <script>
 (() => {
   'use strict';
 
-  // ── Design constants (all layout in 700×500 design units) ──────────────
-  const W = 700, H = 470;
+  // ── Design constants (all layout in 400×468 design units) ──────────────
+  const W = 400, H = 468;
   const PXCM = 4.2;                 // canvas px per simulated cm
   const ANCHOR_Y = 32;              // springs hang from here (bar bottom)
   const L0 = 50;                    // natural length of each spring, cm
@@ -51,7 +51,7 @@
 
   // ── Scene objects ───────────────────────────────────────────────────────
   const springs = [
-    { x: 255, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
+    { x: 207, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
   ];
 
   const massDefs = [
@@ -59,7 +59,7 @@
   ];
   const masses = [];
   {
-    let xCursor = 240;
+    let xCursor = 192;
     for (const def of massDefs) {
       const r = 14.5 * Math.cbrt(def.m / 0.1);
       const h = 2.1 * r;
@@ -74,14 +74,13 @@
   }
 
   // ── UI state ────────────────────────────────────────────────────────────
-  const ruler = { x: 8, y: 54 };
+  const ruler = { x: 26, y: 54 };
   const RUL_W = 38, RUL_LEN = 90 * PXCM, RUL_H = RUL_LEN + 12;
   let paused = false, hintDone = false;
   let drag = null;
 
   // ── Control geometry ────────────────────────────────────────────────────
-  const PAUSE = { x: 600, y: 432, r: 13 };
-  const RESET = { x: 652, y: 432, r: 15 };
+  const RESET = { x: 372, y: 430, r: 15 };
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -190,7 +189,7 @@
       mass.topY = FLOOR_Y - HOOK_H - mass.h;
       mass.vy = 0; mass.attached = -1;
     }
-    ruler.x = 8; ruler.y = 54;
+    ruler.x = 26; ruler.y = 54;
     paused = false; hintDone = false;
   }
 
@@ -226,7 +225,6 @@
     canvas.setPointerCapture(e.pointerId);
 
     if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3) { resetAll(); return; }
-    if (dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) { paused = !paused; return; }
     const mi = massHit(mx, my);
     if (mi >= 0) {
       const mass = masses[mi];
@@ -289,7 +287,7 @@
       if (mass.attached < 0) {
         const si = findSnap(mass);
         if (si >= 0) attach(si, drag.i);
-        else mass.cx = clamp(mass.cx, 70, 430);
+        else mass.cx = clamp(mass.cx, 24, 374);
       }
     }
     drag = null;
@@ -299,8 +297,7 @@
 
   function updateCursor(mx, my) {
     let c = 'default';
-    if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3 ||
-        dist(mx, my, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) c = 'pointer';
+    if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3) c = 'pointer';
     else if (massHit(mx, my) >= 0) c = 'grab';
     else if (inRect(mx, my, ruler.x, ruler.y, RUL_W, RUL_H)) c = 'grab';
     canvas.style.cursor = c;
@@ -311,20 +308,20 @@
     let g = ctx.createLinearGradient(0, 14, 0, ANCHOR_Y);
     g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
     ctx.fillStyle = g;
-    rr(110, 14, 290, ANCHOR_Y - 14, 3); ctx.fill();
+    rr(62, 14, 290, ANCHOR_Y - 14, 3); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.fillStyle = 'rgba(60,40,20,0.6)';
-    for (const sx of [120, 390]) {
+    for (const sx of [72, 342]) {
       ctx.beginPath(); ctx.arc(sx, 23, 2.5, 0, 2 * Math.PI); ctx.fill();
     }
     g = ctx.createLinearGradient(0, FLOOR_Y, 0, FLOOR_Y + 10);
     g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
     ctx.fillStyle = g;
-    rr(56, FLOOR_Y, 380, 10, 2); ctx.fill();
+    rr(8, FLOOR_Y, 380, 10, 2); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.stroke();
     ctx.fillStyle = '#8a6238';
-    ctx.fillRect(74, FLOOR_Y + 10, 12, 8);
-    ctx.fillRect(406, FLOOR_Y + 10, 12, 8);
+    ctx.fillRect(26, FLOOR_Y + 10, 12, 8);
+    ctx.fillRect(358, FLOOR_Y + 10, 12, 8);
   }
 
   function drawSpring(s) {
@@ -416,23 +413,6 @@
     ctx.restore();
   }
 
-  function drawTimeControls() {
-    ctx.beginPath(); ctx.arc(PAUSE.x, PAUSE.y, PAUSE.r, 0, 2 * Math.PI);
-    ctx.fillStyle = '#3a78c2'; ctx.fill();
-    ctx.strokeStyle = '#2c5f9e'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#fff';
-    if (paused) {
-      ctx.beginPath();
-      ctx.moveTo(PAUSE.x - 3.5, PAUSE.y - 6);
-      ctx.lineTo(PAUSE.x + 6.5, PAUSE.y);
-      ctx.lineTo(PAUSE.x - 3.5, PAUSE.y + 6);
-      ctx.closePath(); ctx.fill();
-    } else {
-      ctx.fillRect(PAUSE.x - 5, PAUSE.y - 6, 3.4, 12);
-      ctx.fillRect(PAUSE.x + 1.6, PAUSE.y - 6, 3.4, 12);
-    }
-  }
-
   function drawReset() {
     ctx.beginPath(); ctx.arc(RESET.x, RESET.y, RESET.r, 0, 2 * Math.PI);
     ctx.fillStyle = '#e8762d'; ctx.fill();
@@ -453,7 +433,6 @@
       drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
     }
     drawSnapHighlight();
-    drawTimeControls();
     drawReset();
   }
 
