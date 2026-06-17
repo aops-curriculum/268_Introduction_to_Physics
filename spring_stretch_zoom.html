@@ -136,7 +136,7 @@
   let scale = 1, dpr = 1;
   function fit() {
     const vw = window.innerWidth || W;
-    let s = clamp(vw / W, 0.3, 2.4);
+    let s = clamp(vw / W, 0.3, 1.0);
     if (Math.abs(s - 1) < 0.03) s = 1;
     scale = s; dpr = window.devicePixelRatio || 1;
     canvas.width  = Math.round(W * s * dpr);
