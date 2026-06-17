@@ -67,7 +67,7 @@
     const GROUND = 270;
     const THMAX = 12 * Math.PI / 180;    // max tilt
     const SNAP = 0.25, XMAX = 2;         // snap grid (m), arm length (m)
-    const KITP = { x: 209, y: 2, w: 130, h: 36 };
+    const KITP = { x: 194, y: 2, w: 160, h: 66 };
     const RESETBTN = { x: 250, y: 250, w: 48, h: 16 };
 
     // ── Object kit ───────────────────────────────────────────
@@ -427,19 +427,19 @@
       ctx.fillStyle = '#fff'; ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1.2; ctx.stroke();
       const cells = [
-        [KITP.x + 35, KITP.y + 21],
-        [KITP.x + 95, KITP.y + 21],
+        [KITP.x + 48, KITP.y + 46],
+        [KITP.x + 112, KITP.y + 46],
       ];
-      const scale = 0.5;
-      ctx.font = '9.5px Segoe UI';
+      const scale = 1;
+      ctx.font = '11px Segoe UI';
       KIT_ITEMS.forEach((id, i) => {
         if (isUsed(id)) return;               // hide a brick once it's placed/dragging
         const [cx, by] = cells[i], t = TYPES[id];
         ctx.save(); ctx.translate(cx, by); ctx.scale(scale, scale); drawObj(id); ctx.restore();
         ctx.fillStyle = '#556';
         ctx.textAlign = 'center';
-        ctx.fillText(t.label, cx, by + 11);
-        kitRects.push({ x: cx - 19, y: by - t.h * scale - 6, w: 38, h: t.h * scale + 20, type: id });
+        ctx.fillText(t.label, cx, by + 13);
+        kitRects.push({ x: cx - 25, y: by - t.h * scale - 8, w: 50, h: t.h * scale + 24, type: id });
       });
     }
 
@@ -454,7 +454,7 @@
           ctx.fillStyle = '#93aabb';
           ctx.font = '13px Segoe UI';
           ctx.textAlign = 'center';
-          ctx.fillText('Drag bricks onto the plank', W / 2, 56);
+          ctx.fillText('Drag bricks onto the plank', W / 2, 84);
         }
       }
       const items = layout();
