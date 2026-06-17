@@ -336,8 +336,8 @@
         ctx.textAlign = 'center';
         for (let i = 1; i <= 8; i++) {
           const v = i * SNAP;
-          ctx.fillText(String(v), -v * S, -10);
-          ctx.fillText(String(v),  v * S, -10);
+          ctx.fillText(String(v), -v * S, -5);
+          ctx.fillText(String(v),  v * S, -5);
         }
         ctx.font = 'italic 8.5px Segoe UI';
         ctx.fillText('meters', -HALF / 2, -1.5);
