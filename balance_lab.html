@@ -82,7 +82,7 @@
     const THMAX = 25 * Math.PI / 180;    // max tilt
     const SNAP = 0.25, XMAX = 2;         // snap grid (m), arm length (m)
     // Kit panel: centered in canvas, in the sky above the plank
-    const KITP = { x: 209, y: 24, w: 130, h: 70 };
+    const KITP = { x: 209, y: 2, w: 130, h: 36 };
     // Reset button: inside fulcrum near its base
     const RESETBTN = { x: 250, y: 250, w: 48, h: 16 };
 
@@ -428,8 +428,8 @@
       ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1.2; ctx.stroke();
       // Two bricks side by side, centered in panel
       const cells = [
-        [KITP.x + 35, KITP.y + 45],
-        [KITP.x + 95, KITP.y + 45],
+        [KITP.x + 35, KITP.y + 21],
+        [KITP.x + 95, KITP.y + 21],
       ];
       const scale = 0.5;
       ctx.font = '9.5px Segoe UI';
@@ -448,19 +448,19 @@
       drawBackground();
       drawFulcrum();
       if (ui.level) drawGauge();
-      const items = layout();
-      drawPlank(items);
-      if (ui.forces) drawForces(items);
-      if (ui.labels) drawMassLabels(items);
       if (!init.clean) {
         drawKit();
         if (!hintDone) {
           ctx.fillStyle = '#93aabb';
           ctx.font = '13px Segoe UI';
           ctx.textAlign = 'center';
-          ctx.fillText('Drag bricks onto the plank', W / 2, 14);
+          ctx.fillText('Drag bricks onto the plank', W / 2, 56);
         }
       }
+      const items = layout();
+      drawPlank(items);
+      if (ui.forces) drawForces(items);
+      if (ui.labels) drawMassLabels(items);
       // Reset button drawn last so it's always visible above plank
       drawResetBtn();
       if (drag) {
