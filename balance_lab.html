@@ -7,11 +7,6 @@
 <script>
 // EigenNode auto-height v2.4
 (function() {
-  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
-  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
-  // space inside the iframe — AoPS classroom embeds in a narrower column
-  // than the 600px content, so a horizontal scrollbar appears and steals
-  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
   var BUFFER = 4;
   var H_SCROLLBAR = 18;
   var measuring = false;
@@ -20,12 +15,6 @@
     var b = document.body, h = document.documentElement;
     if (!b) return 0;
     measuring = true;
-    // Temporarily neutralise body's height/min-height (overriding stylesheet
-    // rules with !important) so scrollHeight reflects actual content extent.
-    // Without this, patterns like body { height: 100vh } cause scrollHeight
-    // to echo the iframe's current viewport — adding BUFFER each cycle
-    // ratchets the iframe taller forever. Browser doesn't paint until this
-    // synchronous block returns, so no visible flicker.
     var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
     var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
     b.style.setProperty('height', 'auto', 'important');
@@ -34,10 +23,6 @@
     if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
     if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
     measuring = false;
-    // Check the documentElement only — that's the element that owns the
-    // iframe's horizontal scrollbar. Body can be narrower than the iframe
-    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
-    // 1-2px overflow that doesn't actually trigger a scrollbar.
     var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
     return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
   }
@@ -82,9 +67,7 @@
     const GROUND = 270;
     const THMAX = 12 * Math.PI / 180;    // max tilt
     const SNAP = 0.25, XMAX = 2;         // snap grid (m), arm length (m)
-    // Kit panel: centered in canvas, in the sky above the plank
     const KITP = { x: 209, y: 2, w: 130, h: 36 };
-    // Reset button: inside fulcrum near its base
     const RESETBTN = { x: 250, y: 250, w: 48, h: 16 };
 
     // ── Object kit ───────────────────────────────────────────
@@ -95,9 +78,6 @@
     const KIT_ITEMS = ['b5', 'b10'];
 
     // ── URL parameters ───────────────────────────────────────
-    // rulers=1|0  position=none|rulers|marks  labels=1|0
-    // forces=1|0  level=1|0  clean=1  place=<item>@<pos>,...
-    //   items: 5, 10 ; pos in meters, negative=left
     const Q = new URLSearchParams(location.search);
     const qBool = (name, dflt) => {
       const v = Q.get(name);
@@ -135,10 +115,10 @@
     })();
 
     // ── State ────────────────────────────────────────────────
-    let placed = [];                 // [{type, pos}] in stacking order
-    let theta = 0, omega = 0;        // plank angle (rad, + = right side down)
+    let placed = [];
+    let theta = 0, omega = 0;
     let hintDone = false;
-    let drag = null;                 // {type, mx, my}
+    let drag = null;
     let snapPos = null;
     let kitRects = [];
     const ui = { labels: true, forces: false, level: false, pos: 'rulers' };
@@ -154,17 +134,14 @@
     reset();
 
     // ── Physics ──────────────────────────────────────────────
-    // Law of the lever: the plank is balanced iff sum(m_i * x_i) = 0 exactly
-    // (signed positions on the 0.25 m snap grid), i.e. M1*x1 = M2*x2.
     const G = 9.8;
-    const I_PLANK = 40;   // (1/12) * 30 kg * (4 m)^2
+    const I_PLANK = 40;
     const netMoment = () => placed.reduce((n, o) => n + TYPES[o.type].mass * o.pos, 0);
     const inertia   = () => placed.reduce((I, o) => I + TYPES[o.type].mass * o.pos * o.pos, I_PLANK);
 
     function step(h) {
       const net = netMoment();
       if (net === 0) {
-        // Exactly balanced (or empty): gently return to (and hold) level.
         omega += (-8 * theta - 5.7 * omega) * h;
       } else {
         omega += (G * net * Math.cos(theta) / inertia() - 1.2 * omega) * h;
@@ -175,16 +152,16 @@
     }
 
     // ── Geometry helpers ─────────────────────────────────────
-    const w2 = (rx, ry) => {               // plank space → world
+    const w2 = (rx, ry) => {
       const c = Math.cos(theta), s = Math.sin(theta);
       return [PX + rx * c - ry * s, PY + rx * s + ry * c];
     };
-    const p2 = (mx, my) => {               // world → plank space
+    const p2 = (mx, my) => {
       const c = Math.cos(theta), s = Math.sin(theta);
       const dx = mx - PX, dy = my - PY;
       return [dx * c + dy * s, -dx * s + dy * c];
     };
-    function layout() {                    // stacking: objects pile up at a mark
+    function layout() {
       const hh = {}, out = [];
       let si;
       for (const o of placed) {
@@ -207,7 +184,7 @@
     }
     const inRect = (mx, my, r) => mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
 
-    // ── Object art (origin = bottom center, drawn upward) ────
+    // ── Object art ───────────────────────────────────────────
     function drawBrickStack(n) {
       for (let i = 0; i < n; i++) {
         const y0 = -(i + 1) * 17;
@@ -238,7 +215,6 @@
       sky.addColorStop(1, '#eef8fd');
       ctx.fillStyle = sky;
       ctx.fillRect(0, 0, W, GROUND);
-      // Clouds (fixed, decorative)
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       for (const [cx, cy, s] of [[88, 30, 1.0], [400, 18, 0.8]]) {
         ctx.beginPath();
@@ -247,7 +223,6 @@
         ctx.ellipse(cx - 26 * s, cy + 5 * s, 20 * s, 9 * s, 0, 0, Math.PI * 2);
         ctx.fill();
       }
-      // Ground
       const g = ctx.createLinearGradient(0, GROUND, 0, H);
       g.addColorStop(0, '#76b96b');
       g.addColorStop(1, '#5aa251');
@@ -311,15 +286,11 @@
       ctx.translate(PX, PY);
       ctx.rotate(theta);
       // Support beams from ±0.1 m on board top to pivot
-      const bFill   = ui.pos === 'rulers' ? '#f0e6c2' : '#c08a4e';
-      const bStroke = ui.pos === 'rulers' ? '#b1a06b' : '#8a5e2e';
-      ctx.lineCap = 'round';
+      const beamColor = ui.pos === 'rulers' ? '#c8b87a' : '#9a6e38';
+      ctx.lineCap = 'butt';
       for (const bx of [-0.1 * S, 0.1 * S]) {
-        ctx.strokeStyle = bFill;
-        ctx.lineWidth = 6;
-        ctx.beginPath(); ctx.moveTo(bx, BOARD_OFFSET); ctx.lineTo(0, 0); ctx.stroke();
-        ctx.strokeStyle = bStroke;
-        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = beamColor;
+        ctx.lineWidth = 5;
         ctx.beginPath(); ctx.moveTo(bx, BOARD_OFFSET); ctx.lineTo(0, 0); ctx.stroke();
       }
       ctx.lineCap = 'butt';
@@ -350,8 +321,8 @@
         ctx.textAlign = 'center';
         for (let i = 1; i <= 8; i++) {
           const v = i * SNAP;
-          ctx.fillText(String(v), -v * S, BOARD_OFFSET + 14);
-          ctx.fillText(String(v),  v * S, BOARD_OFFSET + 14);
+          ctx.fillText(String(v), -v * S, BOARD_OFFSET + 17);
+          ctx.fillText(String(v),  v * S, BOARD_OFFSET + 17);
         }
         ctx.font = 'italic 8.5px Segoe UI';
         ctx.fillText('meters', -HALF / 2, BOARD_OFFSET + PT - 1.5);
@@ -440,7 +411,6 @@
       rr(KITP.x, KITP.y, KITP.w, KITP.h, 9);
       ctx.fillStyle = '#fff'; ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1.2; ctx.stroke();
-      // Two bricks side by side, centered in panel
       const cells = [
         [KITP.x + 35, KITP.y + 21],
         [KITP.x + 95, KITP.y + 21],
@@ -475,7 +445,6 @@
       drawPlank(items);
       if (ui.forces) drawForces(items);
       if (ui.labels) drawMassLabels(items);
-      // Reset button drawn last so it's always visible above plank
       drawResetBtn();
       if (drag) {
         ctx.save();
@@ -500,7 +469,7 @@
     }
     requestAnimationFrame(frame);
 
-    // ── Interaction (pointer events: mouse + touch) ──────────
+    // ── Interaction ──────────────────────────────────────────
     const cpos = e => {
       const r = canvas.getBoundingClientRect();
       return [e.clientX - r.left, e.clientY - r.top];
