@@ -7,7 +7,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       position: relative;
-      width: 460px; height: 470px; overflow: hidden;
+      width: 384px; height: 468px; overflow: hidden;
       background: #f5f5f5;
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none; -webkit-user-select: none;
@@ -15,32 +15,32 @@
     canvas { display: block; touch-action: none; }
     #zoom-bar {
       position: absolute;
-      display: flex; align-items: center; gap: 5px;
+      display: flex; align-items: center; gap: 4px;
       background: rgba(255,255,255,0.93);
       border: 1px solid rgba(0,0,0,0.14);
       border-radius: 6px;
-      padding: 3px 8px;
+      padding: 3px 7px;
       z-index: 2;
       pointer-events: auto;
       white-space: nowrap;
     }
-    #zoom-bar label { font-size: 11px; color: #2c3540; }
-    #zoom-bar input[type=range] { width: 96px; cursor: pointer; }
-    #zoom-val { font: bold 11px 'Segoe UI', sans-serif; color: #2c3540; min-width: 30px; }
+    #zoom-bar label { font-size: 10px; color: #2c3540; }
+    #zoom-bar input[type=range] { width: 84px; cursor: pointer; }
+    #zoom-val { font: bold 10px 'Segoe UI', sans-serif; color: #2c3540; min-width: 28px; }
     #reset-view {
-      padding: 2px 7px;
+      padding: 1px 6px;
       border-radius: 4px;
       background: #b0b8c4;
       border: 1px solid #8a9aaa;
       color: #fff;
-      font: bold 10px 'Segoe UI', sans-serif;
+      font: bold 9px 'Segoe UI', sans-serif;
       cursor: pointer;
     }
     #reset-view.active { background: #e8762d; border-color: #bf5a18; }
   </style>
 </head>
 <body>
-<canvas id="c" width="460" height="470"></canvas>
+<canvas id="c" width="384" height="468"></canvas>
 <div id="zoom-bar">
   <label for="zoom-slider">Zoom</label>
   <input type="range" id="zoom-slider" min="1" max="4" step="0.01" value="1">
@@ -51,8 +51,8 @@
 (() => {
   'use strict';
 
-  // ── Design constants (all layout in 460×470 design units) ──────────────
-  const W = 460, H = 470;
+  // ── Design constants — identical to spring_stretch.html ─────────────────
+  const W = 384, H = 468;
   const PXCM = 4.2;
   const ANCHOR_Y = 32;
   const L0 = 50;
@@ -76,13 +76,13 @@
 
   // ── Scene objects ───────────────────────────────────────────────────────
   const springs = [
-    { x: 255, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
+    { x: 199, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
   ];
 
   const massDefs = [{ m: 0.100, label: '100 g' }];
   const masses = [];
   {
-    let xCursor = 240;
+    let xCursor = 184;
     for (const def of massDefs) {
       const r = 14.5 * Math.cbrt(def.m / 0.1);
       const h = 2.1 * r;
@@ -97,18 +97,18 @@
   }
 
   // ── UI state ────────────────────────────────────────────────────────────
-  const ruler = { x: 8, y: 54 };
+  const ruler = { x: 50, y: 54 };
   const RUL_W = 38, RUL_LEN = 90 * PXCM, RUL_H = RUL_LEN + 12;
   let hintDone = false;
   let drag = null;
+
+  // ── Fixed control geometry ──────────────────────────────────────────────
+  const RESET = { x: 364, y: 430, r: 15 };
 
   // ── Zoom / Pan state ────────────────────────────────────────────────────
   // canvasX = worldX * zoom - panX  →  worldX = (canvasX + panX) / zoom
   const ZOOM_MIN = 1, ZOOM_MAX = 4;
   let zoom = 1, panX = 0, panY = 0;
-
-  // ── Fixed control geometry (in unzoomed canvas design coords) ───────────
-  const RESET = { x: 430, y: 434, r: 12 };
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -145,17 +145,18 @@
     canvas.style.height = (H * s) + 'px';
     document.body.style.width  = (W * s) + 'px';
     document.body.style.height = (H * s) + 'px';
-    // Position zoom bar just below the ceiling bar, at the left
     zoomBar.style.top  = Math.round(34 * s) + 'px';
-    zoomBar.style.left = Math.round(8 * s) + 'px';
+    zoomBar.style.left = '0px';
   }
   window.addEventListener('resize', fit);
 
   // ── Coordinate helpers ──────────────────────────────────────────────────
+  // toCanvas: pointer → canvas/design coords (0..W, 0..H)
   const toCanvas = e => {
     const r = canvas.getBoundingClientRect();
     return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
   };
+  // toWorld: pointer → world coords (accounting for zoom/pan)
   const toWorld = e => {
     const [cx, cy] = toCanvas(e);
     return [(cx + panX) / zoom, (cy + panY) / zoom];
@@ -174,14 +175,13 @@
     panY = wy * newZoom - cy;
     zoom = newZoom;
     clampPan();
-    syncControls();
   }
 
-  function resetView() { zoom = 1; panX = 0; panY = 0; syncControls(); }
+  function resetView() { zoom = 1; panX = 0; panY = 0; }
 
-  // ── HTML zoom control sync ──────────────────────────────────────────────
-  const zoomSlider = document.getElementById('zoom-slider');
-  const zoomVal    = document.getElementById('zoom-val');
+  // ── HTML zoom control ───────────────────────────────────────────────────
+  const zoomSlider   = document.getElementById('zoom-slider');
+  const zoomVal      = document.getElementById('zoom-val');
   const resetViewBtn = document.getElementById('reset-view');
 
   function syncControls() {
@@ -265,7 +265,7 @@
       mass.topY = FLOOR_Y - HOOK_H - mass.h;
       mass.vy = 0; mass.attached = -1;
     }
-    ruler.x = 8; ruler.y = 54;
+    ruler.x = 50; ruler.y = 54;
     hintDone = false;
   }
 
@@ -296,10 +296,10 @@
     const [wx, wy] = toWorld(e);
     canvas.setPointerCapture(e.pointerId);
 
-    // Fixed UI (canvas coords)
+    // Fixed UI elements use canvas/design coords
     if (dist(cx, cy, RESET.x, RESET.y) <= RESET.r + 3) { resetAll(); return; }
 
-    // World objects (world coords)
+    // World objects use world coords
     const mi = massHit(wx, wy);
     if (mi >= 0) {
       const mass = masses[mi];
@@ -311,7 +311,7 @@
     if (inRect(wx, wy, ruler.x, ruler.y, RUL_W, RUL_H)) {
       drag = { type: 'ruler', dx: wx - ruler.x, dy: wy - ruler.y }; return;
     }
-    // Background drag to pan when zoomed in
+    // Background drag pans when zoomed in
     if (zoom > 1) {
       drag = { type: 'pan', startCX: cx, startCY: cy, startPanX: panX, startPanY: panY };
     }
@@ -365,7 +365,7 @@
       if (mass.attached < 0) {
         const si = findSnap(mass);
         if (si >= 0) attach(si, drag.i);
-        else mass.cx = clamp(mass.cx, 70, W - 30);
+        else mass.cx = clamp(mass.cx, 16, 366);
       }
     }
     drag = null;
@@ -393,35 +393,35 @@
     let g = ctx.createLinearGradient(0, 14, 0, ANCHOR_Y);
     g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
     ctx.fillStyle = g;
-    rr(110, 14, 290, ANCHOR_Y - 14, 3); ctx.fill();
+    rr(54, 14, 290, ANCHOR_Y - 14, 3); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.fillStyle = 'rgba(60,40,20,0.6)';
-    for (const sx of [120, 390]) {
+    for (const sx of [64, 334]) {
       ctx.beginPath(); ctx.arc(sx, 23, 2.5, 0, 2 * Math.PI); ctx.fill();
     }
     g = ctx.createLinearGradient(0, FLOOR_Y, 0, FLOOR_Y + 10);
     g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
     ctx.fillStyle = g;
-    rr(56, FLOOR_Y, 380, 10, 2); ctx.fill();
+    rr(0, FLOOR_Y, 380, 10, 2); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.stroke();
     ctx.fillStyle = '#8a6238';
-    ctx.fillRect(74, FLOOR_Y + 10, 12, 8);
-    ctx.fillRect(406, FLOOR_Y + 10, 12, 8);
+    ctx.fillRect(18, FLOOR_Y + 10, 12, 8);
+    ctx.fillRect(350, FLOOR_Y + 10, 12, 8);
   }
 
   function drawRefLines() {
     ctx.save();
     ctx.lineCap = 'butt';
 
-    // Unstretched / natural length — always shown
+    // Natural length — always shown
     const uy = ANCHOR_Y + L0 * PXCM;
     ctx.setLineDash([7, 5]); ctx.strokeStyle = '#3a6fd8'; ctx.lineWidth = 1.8;
-    ctx.beginPath(); ctx.moveTo(108, uy); ctx.lineTo(402, uy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(52, uy); ctx.lineTo(344, uy); ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle = '#3a6fd8'; ctx.font = '10px Segoe UI'; ctx.textAlign = 'left';
     ctx.fillText('Natural Length', springs[0].x + 22, uy - 3);
 
-    // Resting position — shown only when a mass is attached
+    // Resting position — shown only while a mass is attached
     for (const s of springs) {
       if (s.massIdx < 0) continue;
       const ry = ANCHOR_Y + (L0 + eqExt(s) * 100) * PXCM;
@@ -528,19 +528,19 @@
     ctx.beginPath(); ctx.arc(RESET.x, RESET.y, RESET.r, 0, 2 * Math.PI);
     ctx.fillStyle = '#e8762d'; ctx.fill();
     ctx.strokeStyle = '#bf5a18'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 15px Segoe UI'; ctx.textAlign = 'center';
-    ctx.fillText('↺', RESET.x, RESET.y + 5.5);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Segoe UI'; ctx.textAlign = 'center';
+    ctx.fillText('↺', RESET.x, RESET.y + 6);
   }
 
   function draw() {
     const s = scale * dpr;
 
-    // Clear canvas
+    // Clear
     ctx.setTransform(s, 0, 0, s, 0, 0);
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, W, H);
 
-    // Zoomable scene — explicit setTransform, no save/restore wrapper
+    // Zoomable scene — explicit setTransform, no outer save/restore
     ctx.setTransform(s * zoom, 0, 0, s * zoom, -panX * s, -panY * s);
     drawBarAndShelf();
     drawRefLines();
@@ -551,7 +551,7 @@
     }
     drawSnapHighlight();
 
-    // Fixed UI — reset to unzoomed transform
+    // Fixed UI — back to unzoomed transform
     ctx.setTransform(s, 0, 0, s, 0, 0);
     drawReset();
   }
@@ -590,7 +590,7 @@
       if (s.massIdx < 0) { s.massIdx = 0; m.attached = 0; hintDone = true; }
       const eq = m.m * G / s.k;
       const w0 = Math.sqrt(s.k / m.m);
-      const alpha = 0.14 / 2;
+      const alpha = DAMP / 2;
       const wd = Math.sqrt(w0 * w0 - alpha * alpha);
       const decay = Math.exp(-alpha * t);
       s.ext = eq * (1 - decay * (Math.cos(wd * t) + (alpha / wd) * Math.sin(wd * t)));
@@ -601,7 +601,7 @@
     period() {
       const s = springs[0], m = masses[0];
       const w0 = Math.sqrt(s.k / m.m);
-      const alpha = 0.14 / 2;
+      const alpha = DAMP / 2;
       return 2 * Math.PI / Math.sqrt(w0 * w0 - alpha * alpha);
     },
   };
