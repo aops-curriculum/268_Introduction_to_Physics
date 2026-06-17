@@ -60,26 +60,34 @@
     const SNAP = 0.25, XMAX = 2.0;
     const KIT = { x: 200, y: 6, w: 200, h: 78 };
     const BTN = { x: 199, y: 368, w: 150, h: 22 };
+    const BRICKH = 18;   // uniform brick height for all masses
 
     // ── Level data ───────────────────────────────────────────────
-    // fx = fixed (amber, immovable); ck = cloud bricks available
-    // All positions in metres, multiples of 0.25, |pos| <= 2
-    // Verified solutions (may have multiple):
-    //  1: 5@-1              2: 10@-1              3: 10@-1
-    //  4: 5@-2,5@-2         5: 5@-1,5@-2          6: 5@-2,10@-1
-    //  7: 5@-0.5,10@-2      8: 10@-2 (or 5@-2,5@-2)
-    //  9: 5@-1.5,10@-2      10: 5@-0.75,5@-1.5,10@-2
+    // fx = fixed bricks (amber, immovable); ck = cloud bricks to place
+    // Positions in metres, multiples of 0.25, magnitude ≤ 2
+    // ★ = levels where at least one cloud brick must go on the SAME side as fixed bricks
+    //
+    //  1: 5@-1                             simple symmetric intro
+    //  2: 8@-1  (4×2 = 8×1)               lever ratio
+    //  3: 3@-2  (6×1 = 3×2)               different ratio
+    //  4: 3@-1 + 6@-2  (net -15)          two cloud bricks
+    //  5: ★ 20@-0.75 + 3@+1  (net -12)    3 must go on SAME side as fixed 6@+2
+    //  6: 4@-1 + 10@-1 (stack, net -14)   two fixed bricks; also 4@+1.5+10@-2 works
+    //  7: 4@-0.25 + 8@-2  (net -17)       three fixed; 4 goes very close to pivot
+    //  8: ★ 15@-1 + 7@+1  (net -8)        ONLY grid solution; 7 must go on SAME side as fixed
+    //  9: 2@-0.25 + 6@-1 + 8@-1.5 (net -18.5)   three fixed, three cloud
+    // 10: 4@-1.75 + 6@-2 + 3@-2  (net -25)       all three bricks essential
     const LEVELS = [
-      { fx:[{m:5,p:1}],                             ck:[{m:5}]               },
-      { fx:[{m:10,p:1}],                            ck:[{m:10}]              },
-      { fx:[{m:5,p:2}],                             ck:[{m:10}]              },
-      { fx:[{m:10,p:2}],                            ck:[{m:5},{m:5}]         },
-      { fx:[{m:5,p:1},{m:5,p:2}],                   ck:[{m:5},{m:5}]         },
-      { fx:[{m:10,p:1},{m:5,p:2}],                  ck:[{m:5},{m:10}]        },
-      { fx:[{m:5,p:.5},{m:10,p:1},{m:5,p:2}],       ck:[{m:5},{m:10}]        },
-      { fx:[{m:10,p:1.5},{m:5,p:1}],                ck:[{m:5},{m:5},{m:10}]  },
-      { fx:[{m:5,p:.5},{m:10,p:1},{m:10,p:1.5}],    ck:[{m:5},{m:5},{m:10}]  },
-      { fx:[{m:10,p:2},{m:5,p:1.5},{m:5,p:.75}],    ck:[{m:5},{m:5},{m:10}]  },
+      { fx:[{m:5,p:1}],                              ck:[{m:5}]              },
+      { fx:[{m:4,p:2}],                              ck:[{m:8}]              },
+      { fx:[{m:6,p:1}],                              ck:[{m:3}]              },
+      { fx:[{m:10,p:1.5}],                           ck:[{m:3},{m:6}]        },
+      { fx:[{m:6,p:2}],                              ck:[{m:20},{m:3}]       },
+      { fx:[{m:8,p:1},{m:3,p:2}],                    ck:[{m:4},{m:10}]       },
+      { fx:[{m:2,p:.5},{m:4,p:1},{m:6,p:2}],         ck:[{m:4},{m:8}]        },
+      { fx:[{m:4,p:2}],                              ck:[{m:15},{m:7}]       },
+      { fx:[{m:3,p:1},{m:5,p:1.5},{m:4,p:2}],        ck:[{m:2},{m:6},{m:8}]  },
+      { fx:[{m:8,p:2},{m:3,p:1},{m:4,p:1.5}],        ck:[{m:4},{m:6},{m:3}]  },
     ];
 
     const WIN_MSGS = [
@@ -146,7 +154,7 @@
       ];
       const hh = {};
       return all.map(b => {
-        const k = b.pos.toFixed(2), bh = b.m === 5 ? 17 : 34;
+        const k = b.pos.toFixed(2), bh = BRICKH;
         const base = hh[k] || 0; hh[k] = base + bh;
         return {b, base, bh};
       });
@@ -160,23 +168,19 @@
     }
 
     // ── Brick art ────────────────────────────────────────────────
+    // All bricks are one uniform layer (BRICKH px), labelled with their mass.
     function drawBrick(m, isF) {
-      const n = m === 5 ? 1 : 2;
       const fill = isF ? '#c47c3a' : '#9aa9b8';
       const str  = isF ? '#8a5425' : '#65788c';
-      for (let i = 0; i < n; i++) {
-        ctx.fillStyle = fill; ctx.strokeStyle = str; ctx.lineWidth = 1.2;
-        rr(-23, -(i+1)*17, 46, 16, 2); ctx.fill(); ctx.stroke();
-      }
+      ctx.fillStyle = fill; ctx.strokeStyle = str; ctx.lineWidth = 1.2;
+      rr(-23, -BRICKH, 46, BRICKH - 1, 2); ctx.fill(); ctx.stroke();
     }
     function drawBrickLabelled(m, isF) {
       drawBrick(m, isF);
-      const n = m === 5 ? 1 : 2, label = m + ' kg', cy = -(n*17)/2 - 0.5;
-      ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const tw = ctx.measureText(label).width, bw = tw + 10, bh = 16;
-      ctx.fillStyle = 'rgba(228,232,236,.92)'; ctx.strokeStyle = 'rgba(80,100,120,.4)'; ctx.lineWidth = .8;
-      rr(-bw/2, cy-bh/2, bw, bh, 3); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#000'; ctx.fillText(label, 0, cy); ctx.textBaseline = 'alphabetic';
+      ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,255,255,0.93)';
+      ctx.fillText(m + ' kg', 0, -BRICKH / 2);
+      ctx.textBaseline = 'alphabetic';
     }
 
     // ── Scene drawing ────────────────────────────────────────────
@@ -286,7 +290,7 @@
         ctx.fillStyle = '#556'; ctx.font = '9px Segoe UI'; ctx.textAlign = 'center';
         ctx.fillText(b.m + ' kg', 0, 12);
         ctx.restore();
-        kitR.push({ x:cx-25, y:by-(b.m===5?17:34)-5, w:50, h:(b.m===5?17:34)+18, id:b.id });
+        kitR.push({ x:cx-25, y:by-BRICKH-5, w:50, h:BRICKH+18, id:b.id });
       });
     }
 
@@ -450,7 +454,7 @@
       drawActionBtn();
       if (drag) {
         ctx.save(); ctx.globalAlpha = .88;
-        ctx.translate(drag.mx, drag.my + (drag.m===5?17:34)/2);
+        ctx.translate(drag.mx, drag.my + BRICKH / 2);
         drawBrick(drag.m, false); ctx.restore();
       }
     }
