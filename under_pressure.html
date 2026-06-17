@@ -5,25 +5,17 @@
   <title>Fluid Pressure</title>
   <!-- Original AoPS interactive. Replaces the third-party "Under Pressure" simulation. -->
   <!--
-    URL parameters (all optional; defaults match the I2P09 homework setup):
-      ?atmosphere=on|off   atmospheric pressure term       (default on)
-      &density=600..1500   fluid density in kg/m^3         (default 1000, water)
-      &g=1..25             gravitational accel in m/s^2    (default 9.8, Earth)
+    URL parameters (all optional):
       &ruler=1|0           show the draggable ruler        (default 0)
       &grid=1|0            show the 0.5 m grid             (default 0)
-      &units=metric|atm|english   gauge units              (default metric, kPa)
       &water=0..3          initial water level in m        (default 2.0)
-    Calibration: P = (atmosphere ? 101.325 kPa : 0) + rho*g*depth.
-    Water/Earth/atmosphere-on at 1.0 m depth reads 111.1 kPa.
+    Fixed: density=1000 kg/m³, g=9.8 m/s², atmosphere on, units kPa.
+    Calibration: P = 101.325 kPa + 1000·9.8·depth.
+    At 1.0 m depth: 111.1 kPa.
   -->
 <script>
 // EigenNode auto-height v2.4
 (function() {
-  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
-  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
-  // space inside the iframe — AoPS classroom embeds in a narrower column
-  // than the 600px content, so a horizontal scrollbar appears and steals
-  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
   var BUFFER = 4;
   var H_SCROLLBAR = 18;
   var measuring = false;
@@ -32,12 +24,6 @@
     var b = document.body, h = document.documentElement;
     if (!b) return 0;
     measuring = true;
-    // Temporarily neutralise body's height/min-height (overriding stylesheet
-    // rules with !important) so scrollHeight reflects actual content extent.
-    // Without this, patterns like body { height: 100vh } cause scrollHeight
-    // to echo the iframe's current viewport — adding BUFFER each cycle
-    // ratchets the iframe taller forever. Browser doesn't paint until this
-    // synchronous block returns, so no visible flicker.
     var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
     var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
     b.style.setProperty('height', 'auto', 'important');
@@ -46,10 +32,6 @@
     if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
     if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
     measuring = false;
-    // Check the documentElement only — that's the element that owns the
-    // iframe's horizontal scrollbar. Body can be narrower than the iframe
-    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
-    // 1-2px overflow that doesn't actually trigger a scrollbar.
     var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
     return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
   }
@@ -73,113 +55,32 @@
       background: #f5f5f5;
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none;
-      display: flex;
     }
     #c { display: block; touch-action: none; }
-    #panel {
-      width: 230px; height: 500px; padding: 8px 11px;
-      background: #eef1f4; border-left: 1px solid #d4dade;
-      font-size: 12px; color: #334; overflow: hidden;
-    }
-    #panel .title {
-      font-size: 13px; font-weight: 600; color: #36506a;
-      text-align: center; margin-bottom: 6px;
-    }
-    .group {
-      background: #fff; border: 1px solid #dde3e8; border-radius: 6px;
-      padding: 5px 8px 6px; margin-bottom: 6px;
-    }
-    .group .head { font-weight: 600; font-size: 11.5px; color: #445; }
-    .group .head .val { float: right; font-weight: 400; color: #667; font-variant-numeric: tabular-nums; }
-    .group label { margin-right: 10px; cursor: pointer; white-space: nowrap; }
-    .group input[type=checkbox], .group input[type=radio] { vertical-align: -2px; cursor: pointer; }
-    .group input[type=range] { width: 100%; margin: 6px 0 0; cursor: pointer; }
-    .stack label { display: block; margin: 1px 0; }
-    .ticks { position: relative; height: 15px; margin-top: 1px; }
-    .ticks span {
-      position: absolute; top: 0; transform: translateX(-50%);
-      font-size: 9.5px; color: #678; cursor: pointer; text-align: center; line-height: 1;
-    }
-    .ticks span::before {
-      content: ''; display: block; width: 1px; height: 4px;
-      background: #99a5b0; margin: 0 auto 1px;
-    }
-    .ticks span.edge-r { transform: translateX(-88%); }
-    .btnrow { display: flex; gap: 6px; }
-    .btnrow button {
-      flex: 1; padding: 6px 0; font-size: 12px; font-family: inherit;
-      border: 1px solid #b6c2cc; border-radius: 5px; background: #fafcff;
-      color: #345; cursor: pointer; touch-action: none;
-    }
-    .btnrow button.active { background: #cfe8fa; border-color: #7fb3d6; }
-    .holdhint { font-size: 9.5px; color: #8b98a4; text-align: center; margin: 2px 0 6px; }
-    #btnReset {
-      width: 100%; padding: 5px 0; font-size: 12px; font-family: inherit;
-      border: 1px solid #b6c2cc; border-radius: 5px; background: #fafcff;
-      color: #345; cursor: pointer;
-    }
-    #btnReset:active { background: #e2ecf4; }
   </style>
 </head>
 <body>
-  <canvas id="c" width="470" height="500"></canvas>
-  <div id="panel">
-    <div class="title">Fluid Pressure</div>
-    <div class="group">
-      <label><input type="checkbox" id="ckRuler"> Ruler</label>
-      <label><input type="checkbox" id="ckGrid"> Grid</label>
-    </div>
-    <div class="group">
-      <span class="head">Atmosphere&nbsp;&nbsp;</span>
-      <label><input type="radio" name="atm" value="on" checked> On</label>
-      <label><input type="radio" name="atm" value="off"> Off</label>
-    </div>
-    <div class="group stack">
-      <div class="head">Units</div>
-      <label><input type="radio" name="units" value="metric" checked> Metric (kPa)</label>
-      <label><input type="radio" name="units" value="atm"> Atmospheres (atm)</label>
-      <label><input type="radio" name="units" value="english"> English (psi)</label>
-    </div>
-    <div class="group">
-      <div class="head">Fluid Density <span class="val" id="densVal">1000 kg/m&sup3;</span></div>
-      <input type="range" id="slDens" min="600" max="1500" step="10" value="1000">
-      <div class="ticks" id="densTicks">
-        <span data-v="700"  style="left:11.1%">gasoline</span>
-        <span data-v="1000" style="left:44.4%">water</span>
-        <span data-v="1420" style="left:91.1%">honey</span>
-      </div>
-    </div>
-    <div class="group">
-      <div class="head">Gravity <span class="val" id="gVal">9.8 m/s&sup2;</span></div>
-      <input type="range" id="slG" min="1" max="25" step="0.1" value="9.8">
-      <div class="ticks" id="gTicks">
-        <span data-v="3.7"  style="left:11.25%">Mars</span>
-        <span data-v="9.8"  style="left:36.7%">Earth</span>
-        <span data-v="24.8" style="left:99.2%" class="edge-r">Jupiter</span>
-      </div>
-    </div>
-    <div class="btnrow">
-      <button id="btnFill">Fill &#9650;</button>
-      <button id="btnDrain">Drain &#9660;</button>
-    </div>
-    <div class="holdhint">hold a button to run the faucet</div>
-    <button id="btnReset">&#8634; Reset</button>
-  </div>
+  <canvas id="c" width="700" height="500"></canvas>
   <script>
   (() => {
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
-    const W = 470, H = 500;
+    const W = 700, H = 500;
 
     // ── Scene geometry ───────────────────────────────────────
-    const GROUND_Y = 150;                          // pool rim / ground level
-    const POOL = { l: 80, r: 390, b: 450 };        // pool interior (px)
-    const PXM = 100;                               // pixels per meter
-    const MAX_DEPTH = 3.0;                         // pool depth (m)
-    const WALL = 10;                               // pool wall thickness (px)
-    const SPOUT_X = 124;                           // fill-faucet spout center
-    const P_ATM = 101325;                          // Pa (standard atmosphere)
-    const FLOW_RATE = 0.6;                         // m of water level per second
+    const GROUND_Y = 150;
+    const POOL = { l: 80, r: 390, b: 450 };
+    const PXM = 100;
+    const MAX_DEPTH = 3.0;
+    const WALL = 10;
+    const SPOUT_X = 124;
+    const P_ATM = 101325;
+    const FLOW_RATE = 0.6;
+    const DRAIN_KNOB_X = 434;
+    const DRAIN_PIPE_END = 510;
+
+    // Fixed physics
+    const RHO = 1000, G_ACC = 9.8;
 
     // ── URL-parameter defaults ───────────────────────────────
     const Q = new URLSearchParams(location.search);
@@ -188,111 +89,46 @@
       return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def;
     };
     const DEF = {
-      atm:   (Q.get('atmosphere') || 'on').toLowerCase() !== 'off',
-      dens:  qnum('density', 1000, 600, 1500),
-      g:     qnum('g', 9.8, 1, 25),
       ruler: Q.get('ruler') === '1',
-      grid:  Q.get('grid') === '1',
-      units: (u => u.indexOf('atm') === 0 ? 'atm'
-                 : (u === 'english' || u === 'psi') ? 'english' : 'metric'
-             )((Q.get('units') || 'metric').toLowerCase()),
+      grid:  Q.get('grid')  === '1',
       water: qnum('water', 2.0, 0, MAX_DEPTH),
     };
 
     // ── State ────────────────────────────────────────────────
     const state = {};
     function initState() {
-      state.atm = DEF.atm;       state.dens = DEF.dens;
-      state.g = DEF.g;           state.ruler = DEF.ruler;
-      state.grid = DEF.grid;     state.units = DEF.units;
+      state.ruler = DEF.ruler;
+      state.grid  = DEF.grid;
       state.water = DEF.water;
-      state.fill = false;        state.drain = false;
-      state.gauge = { x: 414, y: 74 };                  // dial center
-      state.rul = { x: 96, y: GROUND_Y };               // ruler left edge, zero mark
-      state.flowPhase = 0;                              // drain-pipe dash animation
+      state.fill  = false;
+      state.drain = false;
+      state.gauge = { x: 570, y: 90 };
+      state.rul   = { x: 96, y: GROUND_Y };
+      state.flowPhase = 0;
     }
-
-    // ── Controls ─────────────────────────────────────────────
-    const $ = id => document.getElementById(id);
-    const ckRuler = $('ckRuler'), ckGrid = $('ckGrid');
-    const slDens = $('slDens'), slG = $('slG');
-    const densVal = $('densVal'), gVal = $('gVal');
-    const btnFill = $('btnFill'), btnDrain = $('btnDrain');
-
-    function syncControls() {
-      ckRuler.checked = state.ruler;
-      ckGrid.checked = state.grid;
-      document.querySelector(`input[name=atm][value=${state.atm ? 'on' : 'off'}]`).checked = true;
-      document.querySelector(`input[name=units][value=${state.units}]`).checked = true;
-      slDens.value = state.dens;
-      slG.value = state.g;
-      densVal.innerHTML = Math.round(state.dens) + ' kg/m³';
-      gVal.innerHTML = state.g.toFixed(1) + ' m/s²';
-    }
-
-    ckRuler.addEventListener('change', () => { state.ruler = ckRuler.checked; });
-    ckGrid.addEventListener('change', () => { state.grid = ckGrid.checked; });
-    document.querySelectorAll('input[name=atm]').forEach(r =>
-      r.addEventListener('change', () => { state.atm = r.value === 'on'; }));
-    document.querySelectorAll('input[name=units]').forEach(r =>
-      r.addEventListener('change', () => { state.units = r.value; }));
-    slDens.addEventListener('input', () => {
-      state.dens = slDens.valueAsNumber;
-      densVal.innerHTML = Math.round(state.dens) + ' kg/m³';
-    });
-    slG.addEventListener('input', () => {
-      state.g = slG.valueAsNumber;
-      gVal.innerHTML = state.g.toFixed(1) + ' m/s²';
-    });
-    document.querySelectorAll('.ticks span').forEach(sp =>
-      sp.addEventListener('click', () => {
-        const sl = sp.parentElement.id === 'densTicks' ? slDens : slG;
-        sl.value = sp.dataset.v;
-        sl.dispatchEvent(new Event('input'));
-      }));
-
-    // Hold-to-run faucet buttons
-    function holdButton(btn, prop) {
-      const on  = e => { e.preventDefault(); state[prop] = true;
-                         btn.classList.add('active');
-                         if (btn.setPointerCapture) btn.setPointerCapture(e.pointerId); };
-      const off = () => { state[prop] = false; btn.classList.remove('active'); };
-      btn.addEventListener('pointerdown', on);
-      btn.addEventListener('pointerup', off);
-      btn.addEventListener('pointercancel', off);
-      btn.addEventListener('lostpointercapture', off);
-    }
-    holdButton(btnFill, 'fill');
-    holdButton(btnDrain, 'drain');
-
-    $('btnReset').addEventListener('click', () => { initState(); syncControls(); });
 
     // ── Physics ──────────────────────────────────────────────
     const surfaceY = () => POOL.b - state.water * PXM;
 
     function pressurePa() {
       const s = surfaceY();
-      const depth = Math.max(0, (state.gauge.y - s) / PXM);   // m below surface
-      return (state.atm ? P_ATM : 0) + state.dens * state.g * depth;
+      const depth = Math.max(0, (state.gauge.y - s) / PXM);
+      return P_ATM + RHO * G_ACC * depth;
     }
 
-    function fmtPressure(P) {
-      if (state.units === 'metric')  return (P / 1000).toFixed(1) + ' kPa';
-      if (state.units === 'atm')     return (P / P_ATM).toFixed(3) + ' atm';
-      return (P * 0.000145037738).toFixed(2) + ' psi';        // english
-    }
+    const fmtPressure = P => (P / 1000).toFixed(1) + ' kPa';
 
-    // Fluid tint follows density (gasoline amber → water cyan → honey gold)
-    function fluidRGB() {
-      const stops = [[700, 236, 207, 116], [1000, 110, 196, 232], [1420, 218, 162, 56]];
-      const d = state.dens;
-      if (d <= stops[0][0]) return stops[0].slice(1);
-      if (d >= stops[2][0]) return stops[2].slice(1);
-      const [a, b] = d <= 1000 ? [stops[0], stops[1]] : [stops[1], stops[2]];
-      const t = (d - a[0]) / (b[0] - a[0]);
-      return [0, 1, 2].map(i => Math.round(a[i + 1] + t * (b[i + 1] - a[i + 1])));
-    }
+    const WATER_RGB = [110, 196, 232];
     const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+    // ── Overlay button rects ─────────────────────────────────
+    const RULER_BTN = { x: 10, y: 10, w: 55, h: 22 };
+    const GRID_BTN  = { x: 10, y: 37, w: 55, h: 22 };
+
+    // Knob rest centers
+    const FILL_KNOB_CX  = SPOUT_X, FILL_KNOB_CY  = 47;
+    const DRAIN_KNOB_CX = DRAIN_KNOB_X, DRAIN_KNOB_CY = 421;
+    const KNOB_R = 8;
 
     // ── Drawing ──────────────────────────────────────────────
     function roundRect(x, y, w, h, r) {
@@ -314,7 +150,7 @@
     }
 
     function drawFaucet() {
-      // horizontal supply pipe from the left edge
+      // horizontal supply pipe
       ctx.fillStyle = '#aeb8c0';
       ctx.fillRect(0, 62, SPOUT_X + 4, 16);
       ctx.fillStyle = 'rgba(255,255,255,0.45)';
@@ -324,29 +160,28 @@
       ctx.fillRect(SPOUT_X - 13, 62, 26, 34);
       ctx.fillStyle = '#8d97a0';
       ctx.fillRect(SPOUT_X - 9, 96, 18, 6);
-      // handle
+      // valve knob — pulls up when active
+      const fky = FILL_KNOB_CY - (state.fill ? 4 : 0);
       ctx.strokeStyle = '#76828c'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(86, 62); ctx.lineTo(86, 52); ctx.stroke();
-      ctx.beginPath(); ctx.arc(86, 49, 6, 0, Math.PI * 2);
-      ctx.fillStyle = '#5f7d99'; ctx.fill();
-      ctx.strokeStyle = '#46627c'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(FILL_KNOB_CX, 62); ctx.lineTo(FILL_KNOB_CX, fky + KNOB_R); ctx.stroke();
+      ctx.beginPath(); ctx.arc(FILL_KNOB_CX, fky, KNOB_R, 0, Math.PI * 2);
+      ctx.fillStyle = state.fill ? '#3d6a8a' : '#5f7d99';
+      ctx.fill();
+      ctx.strokeStyle = '#46627c'; ctx.lineWidth = 1.5; ctx.stroke();
       // pipe outline
       ctx.strokeStyle = '#76828c'; ctx.lineWidth = 1;
       ctx.strokeRect(0.5, 62.5, SPOUT_X + 12.5, 15);
     }
 
     function drawGroundAndPool() {
-      // dirt
       const gr = ctx.createLinearGradient(0, GROUND_Y, 0, H);
       gr.addColorStop(0, '#b08a64');
       gr.addColorStop(1, '#8a6a4a');
       ctx.fillStyle = gr;
       ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-      // grass strips outside the pool
       ctx.fillStyle = '#79b35e';
       ctx.fillRect(0, GROUND_Y - 4, POOL.l - WALL, 8);
       ctx.fillRect(POOL.r + WALL, GROUND_Y - 4, W - POOL.r - WALL, 8);
-      // pool liner (interior above water)
       ctx.fillStyle = '#eef2f2';
       ctx.fillRect(POOL.l, GROUND_Y, POOL.r - POOL.l, POOL.b - GROUND_Y);
     }
@@ -354,22 +189,20 @@
     function drawWater() {
       if (state.water <= 0.0005) return;
       const s = surfaceY();
-      const c = fluidRGB();
       const gr = ctx.createLinearGradient(0, s, 0, POOL.b);
-      gr.addColorStop(0, rgba(c, 0.72));
-      gr.addColorStop(1, rgba(c.map(v => Math.round(v * 0.72)), 0.9));
+      gr.addColorStop(0, rgba(WATER_RGB, 0.72));
+      gr.addColorStop(1, rgba(WATER_RGB.map(v => Math.round(v * 0.72)), 0.9));
       ctx.fillStyle = gr;
       ctx.fillRect(POOL.l, s, POOL.r - POOL.l, POOL.b - s);
-      // surface line
       ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(POOL.l, s); ctx.lineTo(POOL.r, s); ctx.stroke();
     }
 
     function drawWalls() {
       ctx.fillStyle = '#dfdfd4';
-      ctx.fillRect(POOL.l - WALL, GROUND_Y, WALL, POOL.b + WALL - GROUND_Y);     // left
-      ctx.fillRect(POOL.r, GROUND_Y, WALL, POOL.b + WALL - GROUND_Y);            // right
-      ctx.fillRect(POOL.l - WALL, POOL.b, POOL.r - POOL.l + 2 * WALL, WALL);     // floor
+      ctx.fillRect(POOL.l - WALL, GROUND_Y, WALL, POOL.b + WALL - GROUND_Y);
+      ctx.fillRect(POOL.r, GROUND_Y, WALL, POOL.b + WALL - GROUND_Y);
+      ctx.fillRect(POOL.l - WALL, POOL.b, POOL.r - POOL.l + 2 * WALL, WALL);
       ctx.strokeStyle = '#b4b4a6'; ctx.lineWidth = 1;
       ctx.strokeRect(POOL.l - WALL + 0.5, GROUND_Y + 0.5,
                      POOL.r - POOL.l + 2 * WALL - 1, POOL.b + WALL - GROUND_Y - 1);
@@ -377,26 +210,27 @@
     }
 
     function drawDrain() {
-      // pipe from the bottom of the right wall out to the canvas edge
       ctx.fillStyle = '#9fa9b2';
-      ctx.fillRect(POOL.r, 432, W - POOL.r, 18);
+      ctx.fillRect(POOL.r, 432, DRAIN_PIPE_END - POOL.r, 18);
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.fillRect(POOL.r, 434, W - POOL.r, 4);
+      ctx.fillRect(POOL.r, 434, DRAIN_PIPE_END - POOL.r, 4);
       ctx.strokeStyle = '#76828c'; ctx.lineWidth = 1;
-      ctx.strokeRect(POOL.r + 0.5, 432.5, W - POOL.r - 1, 17);
-      // valve wheel
-      ctx.beginPath(); ctx.moveTo(434, 432); ctx.lineTo(434, 424);
+      ctx.strokeRect(POOL.r + 0.5, 432.5, DRAIN_PIPE_END - POOL.r - 1, 17);
+      // valve knob — pulls down when active
+      const dky = DRAIN_KNOB_CY + (state.drain ? 4 : 0);
+      ctx.beginPath(); ctx.moveTo(DRAIN_KNOB_CX, 432); ctx.lineTo(DRAIN_KNOB_CX, dky - KNOB_R);
       ctx.strokeStyle = '#76828c'; ctx.lineWidth = 3; ctx.stroke();
-      ctx.beginPath(); ctx.arc(434, 421, 6, 0, Math.PI * 2);
-      ctx.fillStyle = '#5f7d99'; ctx.fill();
-      ctx.strokeStyle = '#46627c'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(DRAIN_KNOB_CX, dky, KNOB_R, 0, Math.PI * 2);
+      ctx.fillStyle = state.drain ? '#3d6a8a' : '#5f7d99';
+      ctx.fill();
+      ctx.strokeStyle = '#46627c'; ctx.lineWidth = 1.5; ctx.stroke();
       // animated outflow while draining
       if (state.drain && state.water > 0.0005) {
         ctx.save();
-        ctx.strokeStyle = rgba(fluidRGB(), 0.95); ctx.lineWidth = 8;
+        ctx.strokeStyle = rgba(WATER_RGB, 0.95); ctx.lineWidth = 8;
         ctx.setLineDash([12, 9]);
         ctx.lineDashOffset = -state.flowPhase;
-        ctx.beginPath(); ctx.moveTo(POOL.r + 2, 441); ctx.lineTo(W, 441); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(POOL.r + 2, 441); ctx.lineTo(DRAIN_PIPE_END - 2, 441); ctx.stroke();
         ctx.restore();
       }
     }
@@ -404,8 +238,7 @@
     function drawFillStream() {
       if (!state.fill || state.water >= MAX_DEPTH - 0.0005) return;
       const s = surfaceY();
-      const c = fluidRGB();
-      ctx.fillStyle = rgba(c, 0.7);
+      ctx.fillStyle = rgba(WATER_RGB, 0.7);
       ctx.fillRect(SPOUT_X - 6, 102, 12, s - 102);
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
       ctx.fillRect(SPOUT_X - 2, 102, 2, s - 102);
@@ -420,7 +253,6 @@
         ctx.strokeStyle = 'rgba(20,70,90,0.45)';
         ctx.lineWidth = (i % 2 === 0) ? 1.6 : 0.8;
         ctx.beginPath(); ctx.moveTo(POOL.l, y + 0.5); ctx.lineTo(POOL.r, y + 0.5); ctx.stroke();
-        // tick across the left wall + label on the dirt
         ctx.strokeStyle = 'rgba(20,70,90,0.7)'; ctx.lineWidth = 1.6;
         ctx.beginPath(); ctx.moveTo(POOL.l - WALL, y + 0.5); ctx.lineTo(POOL.l, y + 0.5); ctx.stroke();
         const label = (i * 0.5).toFixed(1) + ' m';
@@ -437,16 +269,14 @@
 
     function drawRuler() {
       if (!state.ruler) return;
-      const rx = state.rul.x, ry = state.rul.y;     // ry = the "0" mark
+      const rx = state.rul.x, ry = state.rul.y;
       const r = rulerRect();
       ctx.fillStyle = 'rgba(243,228,170,0.94)';
       ctx.strokeStyle = '#a8915a'; ctx.lineWidth = 1;
       roundRect(r.x, r.y, r.w, r.h, 3); ctx.fill(); ctx.stroke();
-      // unit label
       ctx.fillStyle = '#6b5a2a';
       ctx.font = 'bold 9px Segoe UI'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('m', rx + r.w / 2, ry - 9);
-      // ticks (0.1 m) + numbers (0.5 m), zero at the top
       ctx.strokeStyle = '#5a4a22';
       ctx.textAlign = 'right'; ctx.font = '8.5px Segoe UI';
       for (let i = 0; i <= 30; i++) {
@@ -469,8 +299,6 @@
     function drawGauge() {
       const g = state.gauge, r = 26;
       const P = pressurePa();
-
-      // readout tag above the dial
       const tag = gaugeTagRect();
       ctx.save();
       ctx.shadowColor = 'rgba(0,0,0,0.25)'; ctx.shadowBlur = 5; ctx.shadowOffsetY = 1;
@@ -479,7 +307,6 @@
       ctx.restore();
       ctx.strokeStyle = '#667788'; ctx.lineWidth = 1.2;
       roundRect(tag.x, tag.y, tag.w, tag.h, 4); ctx.stroke();
-      // stem connecting tag to dial
       ctx.fillStyle = '#667788';
       ctx.beginPath();
       ctx.moveTo(g.x - 4, tag.y + tag.h);
@@ -489,8 +316,6 @@
       ctx.fillStyle = '#223344';
       ctx.font = '600 11px Segoe UI'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(fmtPressure(P), g.x, tag.y + tag.h / 2 + 1);
-
-      // dial face
       ctx.save();
       ctx.shadowColor = 'rgba(0,0,0,0.25)'; ctx.shadowBlur = 5; ctx.shadowOffsetY = 1;
       ctx.beginPath(); ctx.arc(g.x, g.y, r, 0, Math.PI * 2);
@@ -498,8 +323,6 @@
       ctx.restore();
       ctx.beginPath(); ctx.arc(g.x, g.y, r, 0, Math.PI * 2);
       ctx.strokeStyle = '#556677'; ctx.lineWidth = 2.5; ctx.stroke();
-
-      // tick marks: 0..250 kPa over a 270° sweep (135° → 405°)
       for (let i = 0; i <= 25; i++) {
         const a = (135 + 270 * i / 25) * Math.PI / 180;
         const major = i % 5 === 0;
@@ -511,9 +334,8 @@
         ctx.stroke();
       }
       ctx.fillStyle = '#8899aa'; ctx.font = '7.5px Segoe UI';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('Pressure', g.x, g.y + 13);
-
-      // needle
       const frac = Math.max(0, Math.min(1, (P / 1000) / 250));
       const ang = (135 + 270 * frac) * Math.PI / 180;
       ctx.strokeStyle = '#cc2222'; ctx.lineWidth = 2;
@@ -523,8 +345,6 @@
       ctx.stroke();
       ctx.beginPath(); ctx.arc(g.x, g.y, 3, 0, Math.PI * 2);
       ctx.fillStyle = '#334455'; ctx.fill();
-
-      // side carets marking the measurement height (the dial center)
       ctx.fillStyle = '#bb3333';
       ctx.beginPath();
       ctx.moveTo(g.x - r - 9, g.y - 5); ctx.lineTo(g.x - r - 9, g.y + 5);
@@ -537,7 +357,26 @@
     function drawHint() {
       ctx.fillStyle = '#7d96ab'; ctx.font = '11px Segoe UI';
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-      ctx.fillText('Drag the pressure gauge', 282, 18);
+      ctx.fillText('Drag the pressure gauge', 490, 18);
+    }
+
+    function drawOverlayButtons() {
+      function drawBtn(rect, label, active) {
+        roundRect(rect.x, rect.y, rect.w, rect.h, 5);
+        ctx.fillStyle = active ? '#cfe8fa' : 'rgba(255,255,255,0.9)';
+        ctx.fill();
+        ctx.strokeStyle = active ? '#7fb3d6' : '#b6c2cc';
+        ctx.lineWidth = 1;
+        roundRect(rect.x, rect.y, rect.w, rect.h, 5);
+        ctx.stroke();
+        ctx.fillStyle = '#334455';
+        ctx.font = '11px Segoe UI';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
+      }
+      drawBtn(RULER_BTN, 'Ruler', state.ruler);
+      drawBtn(GRID_BTN,  'Grid',  state.grid);
     }
 
     function draw() {
@@ -553,6 +392,7 @@
       drawGrid();
       drawRuler();
       drawGauge();
+      drawOverlayButtons();
     }
 
     // ── Animation loop ───────────────────────────────────────
@@ -571,36 +411,49 @@
     }
     requestAnimationFrame(frame);
 
-    // ── Pointer interaction (gauge + ruler dragging) ─────────
+    // ── Pointer interaction ──────────────────────────────────
     const cpos = e => {
       const r = canvas.getBoundingClientRect();
       return [e.clientX - r.left, e.clientY - r.top];
     };
     const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-    const overGauge = (x, y) => {
+    const overGauge       = (x, y) => {
       const g = state.gauge;
       return Math.hypot(x - g.x, y - g.y) < 32 || inRect(x, y, gaugeTagRect());
     };
-    const overRuler = (x, y) => state.ruler && inRect(x, y, rulerRect());
+    const overRulerWidget = (x, y) => state.ruler && inRect(x, y, rulerRect());
+    const overFillKnob    = (x, y) => Math.hypot(x - FILL_KNOB_CX,  y - FILL_KNOB_CY)  < KNOB_R + 6;
+    const overDrainKnob   = (x, y) => Math.hypot(x - DRAIN_KNOB_CX, y - DRAIN_KNOB_CY) < KNOB_R + 6;
 
-    let drag = null;  // { what: 'gauge'|'ruler', dx, dy }
+    let drag = null;
 
     function clampGauge(x, y) {
-      // dial center may travel through the sky and anywhere in the pool,
-      // down to the pool floor (y = POOL.b ⇒ depth exactly 3.0 m)
       y = Math.max(54, Math.min(POOL.b, y));
       x = (y > GROUND_Y + 4)
-        ? Math.max(POOL.l + 14, Math.min(POOL.r - 14, x))   // inside the pool
-        : Math.max(46, Math.min(W - 46, x));                // in the sky
+        ? Math.max(POOL.l + 14, Math.min(POOL.r - 14, x))
+        : Math.max(46, Math.min(W - 46, x));
       return [x, y];
     }
 
     canvas.addEventListener('pointerdown', e => {
       e.preventDefault();
       const [x, y] = cpos(e);
+      // Overlay button toggles (no capture needed — just a click)
+      if (inRect(x, y, RULER_BTN)) { state.ruler = !state.ruler; return; }
+      if (inRect(x, y, GRID_BTN))  { state.grid  = !state.grid;  return; }
+      // Spigot knobs — hold to run
+      if (overFillKnob(x, y)) {
+        drag = { what: 'fill' }; state.fill = true;
+        canvas.setPointerCapture(e.pointerId); return;
+      }
+      if (overDrainKnob(x, y)) {
+        drag = { what: 'drain' }; state.drain = true;
+        canvas.setPointerCapture(e.pointerId); return;
+      }
+      // Gauge / ruler drag
       if (overGauge(x, y)) {
         drag = { what: 'gauge', dx: state.gauge.x - x, dy: state.gauge.y - y };
-      } else if (overRuler(x, y)) {
+      } else if (overRulerWidget(x, y)) {
         drag = { what: 'ruler', dx: state.rul.x - x, dy: state.rul.y - y };
       }
       if (drag) canvas.setPointerCapture(e.pointerId);
@@ -608,25 +461,32 @@
 
     canvas.addEventListener('pointermove', e => {
       const [x, y] = cpos(e);
-      if (drag && drag.what === 'gauge') {
+      if (drag?.what === 'gauge') {
         [state.gauge.x, state.gauge.y] = clampGauge(x + drag.dx, y + drag.dy);
         canvas.style.cursor = 'grabbing';
-      } else if (drag && drag.what === 'ruler') {
+      } else if (drag?.what === 'ruler') {
         state.rul.x = Math.max(-10, Math.min(W - 40, x + drag.dx));
         state.rul.y = Math.max(30, Math.min(H - 30, y + drag.dy));
         canvas.style.cursor = 'grabbing';
-      } else {
-        canvas.style.cursor = (overGauge(x, y) || overRuler(x, y)) ? 'grab' : 'default';
+      } else if (!drag) {
+        const overBtn  = inRect(x, y, RULER_BTN) || inRect(x, y, GRID_BTN);
+        const overKnob = overFillKnob(x, y) || overDrainKnob(x, y);
+        canvas.style.cursor = (overBtn || overKnob) ? 'pointer'
+          : (overGauge(x, y) || overRulerWidget(x, y)) ? 'grab' : 'default';
       }
     });
 
-    const endDrag = () => { drag = null; };
-    canvas.addEventListener('pointerup', endDrag);
-    canvas.addEventListener('pointercancel', endDrag);
+    const endDrag = () => {
+      if (drag?.what === 'fill')  state.fill  = false;
+      if (drag?.what === 'drain') state.drain = false;
+      drag = null;
+    };
+    canvas.addEventListener('pointerup',          endDrag);
+    canvas.addEventListener('pointercancel',      endDrag);
+    canvas.addEventListener('lostpointercapture', endDrag);
 
     // ── Go ───────────────────────────────────────────────────
     initState();
-    syncControls();
   })();
   </script>
 </body>
