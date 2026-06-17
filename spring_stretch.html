@@ -18,56 +18,6 @@
 <body>
 <canvas id="c" width="700" height="470"></canvas>
 <script>
-// EigenNode auto-height v2.4
-(function() {
-  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
-  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
-  // space inside the iframe — AoPS classroom embeds in a narrower column
-  // than the 600px content, so a horizontal scrollbar appears and steals
-  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
-  var BUFFER = 4;
-  var H_SCROLLBAR = 18;
-  var measuring = false;
-  function measure() {
-    if (measuring) return 0;
-    var b = document.body, h = document.documentElement;
-    if (!b) return 0;
-    measuring = true;
-    // Temporarily neutralise body's height/min-height (overriding stylesheet
-    // rules with !important) so scrollHeight reflects actual content extent.
-    // Without this, patterns like body { height: 100vh } cause scrollHeight
-    // to echo the iframe's current viewport — adding BUFFER each cycle
-    // ratchets the iframe taller forever. Browser doesn't paint until this
-    // synchronous block returns, so no visible flicker.
-    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
-    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
-    b.style.setProperty('height', 'auto', 'important');
-    b.style.setProperty('min-height', '0', 'important');
-    var content = b.scrollHeight || 0;
-    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
-    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
-    measuring = false;
-    // Check the documentElement only — that's the element that owns the
-    // iframe's horizontal scrollbar. Body can be narrower than the iframe
-    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
-    // 1-2px overflow that doesn't actually trigger a scrollbar.
-    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
-    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
-  }
-  var last = 0;
-  function report() {
-    var h = measure();
-    if (h > 0 && Math.abs(h - last) >= 2) {
-      last = h;
-      window.parent.postMessage({ type: 'resize', height: h }, '*');
-    }
-  }
-  window.addEventListener('load', report);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
-  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
-})();
-</script>
-<script>
 (() => {
   'use strict';
 
@@ -657,6 +607,68 @@
   resetAll();
   fit();
   requestAnimationFrame(frame);
+})();
+</script>
+<script>
+// EigenNode auto-height v2.5
+(function() {
+  // 4px buffer for subpixel rounding + parent's >=3px noise threshold.
+  // Extra 18px when horizontal overflow forces a scrollbar (eats vertical
+  // space inside the iframe — AoPS classroom embeds in a narrower column
+  // than the 600px content, so a horizontal scrollbar appears and steals
+  // ~10-17px of height). Without this, the iframe ends up ~11-15px short.
+  var BUFFER = 4;
+  var H_SCROLLBAR = 18;
+  var measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    // Temporarily neutralise body's height/min-height (overriding stylesheet
+    // rules with !important) so scrollHeight reflects actual content extent.
+    // Without this, patterns like body { height: 100vh } cause scrollHeight
+    // to echo the iframe's current viewport — adding BUFFER each cycle
+    // ratchets the iframe taller forever. Browser doesn't paint until this
+    // synchronous block returns, so no visible flicker.
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    // position:absolute children don't contribute to scrollHeight. Check their
+    // bounding boxes while height:auto is active so we catch them.
+    var kids = b.children;
+    for (var ki = 0; ki < kids.length; ki++) {
+      if ((window.getComputedStyle(kids[ki]).position || '') === 'absolute') {
+        var r = kids[ki].getBoundingClientRect();
+        if (r.height > 0) {
+          var bot = Math.ceil(r.bottom + (window.pageYOffset || 0));
+          if (bot > content) content = bot;
+        }
+      }
+    }
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    // Check the documentElement only — that's the element that owns the
+    // iframe's horizontal scrollbar. Body can be narrower than the iframe
+    // (e.g. body{width:600px} centered in a 700px iframe) and have its own
+    // 1-2px overflow that doesn't actually trigger a scrollbar.
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var h = measure();
+    if (h > 0 && Math.abs(h - last) >= 2) {
+      last = h;
+      window.parent.postMessage({ type: 'resize', height: h }, '*');
+    }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
 })();
 </script>
 </body>
