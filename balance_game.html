@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Balance Game</title>
+<script>
+(function(){
+  var BUFFER=4,H_SCROLLBAR=18,measuring=false;
+  function measure(){
+    if(measuring)return 0;
+    var b=document.body,h=document.documentElement;
+    if(!b)return 0;
+    measuring=true;
+    var hOld=b.style.height,hPri=b.style.getPropertyPriority('height');
+    var mOld=b.style.minHeight,mPri=b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height','auto','important');
+    b.style.setProperty('min-height','0','important');
+    var content=b.scrollHeight||0;
+    if(hOld)b.style.setProperty('height',hOld,hPri);else b.style.removeProperty('height');
+    if(mOld)b.style.setProperty('min-height',mOld,mPri);else b.style.removeProperty('min-height');
+    measuring=false;
+    var hOverflow=h&&(h.scrollWidth-h.clientWidth)>=4;
+    return Math.ceil(content)+BUFFER+(hOverflow?H_SCROLLBAR:0);
+  }
+  var last=0;
+  function report(){var h=measure();if(h>0&&Math.abs(h-last)>=2){last=h;window.parent.postMessage({type:'resize',height:h},'*');}}
+  window.addEventListener('load',report);
+  if(document.fonts&&document.fonts.ready)document.fonts.ready.then(report);
+  if(window.ResizeObserver&&document.body)new ResizeObserver(report).observe(document.body);
+})();
+</script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 493.2px; height: 360px; overflow: hidden;
+      background: #f5f5f5;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      user-select: none;
+    }
+    canvas { display: block; width: 493.2px; height: 360px; touch-action: none; }
+  </style>
+</head>
+<body>
+  <canvas id="c" width="548" height="400"></canvas>
+  <script>
+  (() => {
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const W = 548, H = 400;
+
+    // ── Geometry constants ───────────────────────────────────────
+    const S = 120;                   // px per metre
+    const PX = 274, PY = 170;        // pivot world position
+    const HALF = 2.2 * S;            // beam half-length px (264)
+    const PT = 29;                   // plank thickness px
+    const BO = 38;                   // board-top offset from pivot (local y)
+    const GROUND = 295;
+    const SB = 340;                  // scene bottom / UI-zone top
+    const THMAX = 12 * Math.PI / 180;
+    const SNAP = 0.25, XMAX = 2.0;
+    const KIT = { x: 200, y: 6, w: 200, h: 78 };
+    const BTN = { x: 199, y: 368, w: 150, h: 22 };
+
+    // ── Level data ───────────────────────────────────────────────
+    // fx = fixed (amber, immovable); ck = cloud bricks available
+    // All positions in metres, multiples of 0.25, |pos| <= 2
+    // Verified solutions (may have multiple):
+    //  1: 5@-1              2: 10@-1              3: 10@-1
+    //  4: 5@-2,5@-2         5: 5@-1,5@-2          6: 5@-2,10@-1
+    //  7: 5@-0.5,10@-2      8: 10@-2 (or 5@-2,5@-2)
+    //  9: 5@-1.5,10@-2      10: 5@-0.75,5@-1.5,10@-2
+    const LEVELS = [
+      { fx:[{m:5,p:1}],                             ck:[{m:5}]               },
+      { fx:[{m:10,p:1}],                            ck:[{m:10}]              },
+      { fx:[{m:5,p:2}],                             ck:[{m:10}]              },
+      { fx:[{m:10,p:2}],                            ck:[{m:5},{m:5}]         },
+      { fx:[{m:5,p:1},{m:5,p:2}],                   ck:[{m:5},{m:5}]         },
+      { fx:[{m:10,p:1},{m:5,p:2}],                  ck:[{m:5},{m:10}]        },
+      { fx:[{m:5,p:.5},{m:10,p:1},{m:5,p:2}],       ck:[{m:5},{m:10}]        },
+      { fx:[{m:10,p:1.5},{m:5,p:1}],                ck:[{m:5},{m:5},{m:10}]  },
+      { fx:[{m:5,p:.5},{m:10,p:1},{m:10,p:1.5}],    ck:[{m:5},{m:5},{m:10}]  },
+      { fx:[{m:10,p:2},{m:5,p:1.5},{m:5,p:.75}],    ck:[{m:5},{m:5},{m:10}]  },
+    ];
+
+    const WIN_MSGS = [
+      'Great balance!','Well done!','Excellent!','Perfect!',
+      'Brilliant!','Nice work!','Spot on!','Outstanding!',
+      'Fantastic!','You did it!'
+    ];
+
+    // ── State ────────────────────────────────────────────────────
+    let lvl = 0;
+    let state = 'placing';  // placing | released | won | lost | game_won
+    let supUp = true;       // supports holding beam
+    let fixB = [];          // [{id,m,pos}]
+    let cldB = [];          // [{id,m,placed,pos}]
+    let theta = 0, omega = 0;
+    let drag = null;        // {id,m,mx,my}
+    let snap = null;
+    let kitR = [];
+    let rtimer = 0;
+    let pResult = null;
+
+    function loadLvl(n) {
+      lvl = n; state = 'placing'; supUp = true;
+      theta = 0; omega = 0; drag = null; snap = null;
+      rtimer = 0; pResult = null;
+      fixB = LEVELS[n].fx.map((b,i) => ({id:'f'+i, m:b.m, pos:b.p}));
+      cldB = LEVELS[n].ck.map((b,i) => ({id:'c'+i, m:b.m, placed:false, pos:null}));
+    }
+    loadLvl(0);
+
+    // ── Physics ──────────────────────────────────────────────────
+    const G = 9.8, IPLANK = 40;
+    function netM() {
+      let s = 0;
+      for (const b of fixB) s += b.m * b.pos;
+      for (const b of cldB) if (b.placed) s += b.m * b.pos;
+      return s;
+    }
+    function inert() {
+      let I = IPLANK;
+      for (const b of fixB) I += b.m * b.pos * b.pos;
+      for (const b of cldB) if (b.placed) I += b.m * b.pos * b.pos;
+      return I;
+    }
+    function step(h) {
+      if (supUp) { theta = 0; omega = 0; return; }
+      const net = netM();
+      if (Math.abs(net) < 0.001) omega += (-8 * theta - 5.7 * omega) * h;
+      else omega += (G * net * Math.cos(theta) / inert() - 1.2 * omega) * h;
+      theta += omega * h;
+      if (theta >  THMAX) { theta =  THMAX; omega = omega >  0.12 ? -0.2 * omega : 0; }
+      if (theta < -THMAX) { theta = -THMAX; omega = omega < -0.12 ? -0.2 * omega : 0; }
+    }
+
+    // ── Geometry helpers ─────────────────────────────────────────
+    const p2 = (mx, my) => {
+      const c = Math.cos(theta), s = Math.sin(theta), dx = mx - PX, dy = my - PY;
+      return [dx * c + dy * s, -dx * s + dy * c];
+    };
+    function layout() {
+      const all = [
+        ...fixB.map(b => ({...b, fx:true})),
+        ...cldB.filter(b => b.placed && !(drag && b.id === drag.id)).map(b => ({...b, fx:false})),
+      ];
+      const hh = {};
+      return all.map(b => {
+        const k = b.pos.toFixed(2), bh = b.m === 5 ? 17 : 34;
+        const base = hh[k] || 0; hh[k] = base + bh;
+        return {b, base, bh};
+      });
+    }
+    const inR = (mx, my, r) => mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+    function rr(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+      ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r);
+      ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+    }
+
+    // ── Brick art ────────────────────────────────────────────────
+    function drawBrick(m, isF) {
+      const n = m === 5 ? 1 : 2;
+      const fill = isF ? '#c47c3a' : '#9aa9b8';
+      const str  = isF ? '#8a5425' : '#65788c';
+      for (let i = 0; i < n; i++) {
+        ctx.fillStyle = fill; ctx.strokeStyle = str; ctx.lineWidth = 1.2;
+        rr(-23, -(i+1)*17, 46, 16, 2); ctx.fill(); ctx.stroke();
+      }
+    }
+    function drawBrickLabelled(m, isF) {
+      drawBrick(m, isF);
+      const n = m === 5 ? 1 : 2, label = m + ' kg', cy = -(n*17)/2 - 0.5;
+      ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const tw = ctx.measureText(label).width, bw = tw + 10, bh = 16;
+      ctx.fillStyle = 'rgba(228,232,236,.92)'; ctx.strokeStyle = 'rgba(80,100,120,.4)'; ctx.lineWidth = .8;
+      rr(-bw/2, cy-bh/2, bw, bh, 3); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#000'; ctx.fillText(label, 0, cy); ctx.textBaseline = 'alphabetic';
+    }
+
+    // ── Scene drawing ────────────────────────────────────────────
+    function drawBg() {
+      const sky = ctx.createLinearGradient(0,0,0,GROUND);
+      sky.addColorStop(0,'#cfe9f9'); sky.addColorStop(1,'#eef8fd');
+      ctx.fillStyle = sky; ctx.fillRect(0,0,W,GROUND);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      for (const [cx,cy,sc] of [[80,30,1],[430,18,.8]]) {
+        ctx.beginPath();
+        ctx.ellipse(cx,cy,34*sc,13*sc,0,0,Math.PI*2);
+        ctx.ellipse(cx+24*sc,cy+4*sc,24*sc,10*sc,0,0,Math.PI*2);
+        ctx.ellipse(cx-26*sc,cy+5*sc,20*sc,9*sc,0,0,Math.PI*2);
+        ctx.fill();
+      }
+      const g = ctx.createLinearGradient(0,GROUND,0,SB);
+      g.addColorStop(0,'#76b96b'); g.addColorStop(1,'#5aa251');
+      ctx.fillStyle = g; ctx.fillRect(0,GROUND,W,SB-GROUND);
+      ctx.strokeStyle = '#4f9347'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0,GROUND); ctx.lineTo(W,GROUND); ctx.stroke();
+      // UI zone
+      ctx.fillStyle = '#e8edf2'; ctx.fillRect(0,SB,W,H-SB);
+      ctx.strokeStyle = '#c0c8d0'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0,SB); ctx.lineTo(W,SB); ctx.stroke();
+    }
+
+    function drawSupports() {
+      if (!supUp) return;
+      const botY = PY + BO + PT;  // 237 — beam board bottom at theta=0
+      const sw = 10;
+      for (const cx of [PX - HALF + 3, PX + HALF - 3]) {
+        ctx.fillStyle = '#8a7060'; ctx.strokeStyle = '#60504a'; ctx.lineWidth = 1;
+        rr(cx-sw/2, botY, sw, GROUND-botY, 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#7a6058';
+        rr(cx-sw, GROUND-5, sw*2, 5, 1); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#b09080';
+        rr(cx-sw/2-1, botY-3, sw+2, 4, 1); ctx.fill();
+      }
+    }
+
+    function drawFulcrum() {
+      ctx.beginPath();
+      ctx.moveTo(PX,PY); ctx.lineTo(PX-40,GROUND); ctx.lineTo(PX+40,GROUND);
+      ctx.closePath(); ctx.fillStyle = '#6e7a88'; ctx.fill();
+      ctx.strokeStyle = '#4d5763'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+
+    function drawPlank() {
+      const items = layout();
+      ctx.save(); ctx.translate(PX,PY); ctx.rotate(theta);
+      // V-support beams
+      ctx.strokeStyle = '#c8b87a'; ctx.lineWidth = 5; ctx.lineCap = 'butt';
+      for (const bx of [-0.1*S, 0.1*S]) {
+        ctx.beginPath(); ctx.moveTo(bx,BO); ctx.lineTo(0,0); ctx.stroke();
+      }
+      // Board
+      ctx.fillStyle = '#f0e6c2'; ctx.strokeStyle = '#b1a06b'; ctx.lineWidth = 1.4;
+      rr(-HALF, BO, 2*HALF, PT, 3); ctx.fill(); ctx.stroke();
+      // Ruler ticks
+      ctx.strokeStyle = '#7a6a3a'; ctx.lineWidth = 1;
+      for (let i = -8; i <= 8; i++) {
+        const x = i * SNAP * S;
+        ctx.beginPath(); ctx.moveTo(x, BO+1); ctx.lineTo(x, BO + (i%4===0?8:5)); ctx.stroke();
+      }
+      ctx.fillStyle = '#5a4c20'; ctx.font = '8px Segoe UI'; ctx.textAlign = 'center';
+      for (let i = 1; i <= 8; i++) {
+        const v = i * SNAP;
+        ctx.fillText(String(v), -v*S, BO+17); ctx.fillText(String(v), v*S, BO+17);
+      }
+      ctx.font = 'italic 8.5px Segoe UI';
+      ctx.fillText('meters', -HALF/2, BO+PT-1.5); ctx.fillText('meters', HALF/2, BO+PT-1.5);
+      // Snap ghost
+      if (drag && snap !== null && state === 'placing') {
+        ctx.fillStyle = 'rgba(60,140,240,.28)';
+        rr(snap*S-6, BO-5, 12, PT+10, 3); ctx.fill();
+      }
+      // Bricks
+      for (const it of items) {
+        ctx.save(); ctx.translate(it.b.pos*S, BO - it.base);
+        drawBrickLabelled(it.b.m, it.b.fx); ctx.restore();
+      }
+      ctx.restore();
+      // Pivot bolt
+      ctx.beginPath(); ctx.arc(PX,PY,5,0,Math.PI*2); ctx.fillStyle = '#4d5763'; ctx.fill();
+    }
+
+    function drawKit() {
+      kitR = [];
+      rr(KIT.x, KIT.y, KIT.w, KIT.h, 9);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.fillStyle = '#667'; ctx.font = '9px Segoe UI'; ctx.textAlign = 'center';
+      ctx.fillText('Available Bricks', KIT.x + KIT.w/2, KIT.y + 13);
+
+      const avail = cldB.filter(b => !b.placed && !(drag && drag.id === b.id));
+      if (!avail.length) {
+        ctx.fillStyle = '#aaa'; ctx.font = '10px Segoe UI'; ctx.textAlign = 'center';
+        ctx.fillText('(all placed)', KIT.x + KIT.w/2, KIT.y + KIT.h/2 + 6);
+        return;
+      }
+      const n = avail.length, sp = Math.min(60, (KIT.w-20)/n);
+      const sx = KIT.x + KIT.w/2 - sp*(n-1)/2;
+      avail.forEach((b, i) => {
+        const cx = sx + i*sp, by = KIT.y + 62;
+        ctx.save(); ctx.translate(cx, by);
+        drawBrick(b.m, false);
+        ctx.fillStyle = '#556'; ctx.font = '9px Segoe UI'; ctx.textAlign = 'center';
+        ctx.fillText(b.m + ' kg', 0, 12);
+        ctx.restore();
+        kitR.push({ x:cx-25, y:by-(b.m===5?17:34)-5, w:50, h:(b.m===5?17:34)+18, id:b.id });
+      });
+    }
+
+    function drawLvlCounter() {
+      rr(5, 6, 148, 60, 8);
+      ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.13)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = '#334'; ctx.font = 'bold 14px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillText('Level ' + (lvl+1) + ' / 10', 14, 27);
+      for (let i = 0; i < 10; i++) {
+        ctx.fillStyle = i <= lvl ? '#3a6aaa' : '#ccc';
+        ctx.beginPath(); ctx.arc(14 + i*12, 47, 4, 0, Math.PI*2); ctx.fill();
+      }
+    }
+
+    function drawActionBtn() {
+      let label = '', color = '';
+      if (state === 'placing')       { label = 'Remove Supports';  color = 'rgba(60,100,155,.88)'; }
+      else if (state === 'won')      { label = lvl < 9 ? 'Next Level  →' : 'Finish!'; color = 'rgba(40,125,60,.92)'; }
+      else if (state === 'lost')     { label = '↺  Try Again'; color = 'rgba(180,60,40,.9)'; }
+      else return;
+      rr(BTN.x, BTN.y, BTN.w, BTN.h, 6);
+      ctx.fillStyle = color; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Segoe UI'; ctx.textAlign = 'center';
+      ctx.fillText(label, BTN.x + BTN.w/2, BTN.y + 15);
+    }
+
+    function drawStatus() {
+      ctx.textAlign = 'center';
+      if (state === 'placing') {
+        ctx.fillStyle = '#556'; ctx.font = '12px Segoe UI';
+        ctx.fillText('Drag bricks onto the beam, then remove the supports', W/2, SB + 16);
+      } else if (state === 'released') {
+        ctx.fillStyle = '#778'; ctx.font = '12px Segoe UI';
+        ctx.fillText('Releasing supports…', W/2, SB + 16);
+      } else if (state === 'won') {
+        ctx.fillStyle = '#1a6e2e'; ctx.font = 'bold 14px Segoe UI';
+        ctx.fillText(WIN_MSGS[lvl] || 'Great!', W/2, SB + 16);
+      } else if (state === 'lost') {
+        ctx.fillStyle = '#922'; ctx.font = 'bold 13px Segoe UI';
+        ctx.fillText('The beam tipped — try a different placement!', W/2, SB + 16);
+      }
+    }
+
+    // ── Archimedes win screen ────────────────────────────────────
+    function drawArchimedes() {
+      ctx.fillStyle = '#fdf6e0'; ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = '#c8a050'; ctx.lineWidth = 3;
+      rr(5, 5, W-10, H-10, 12); ctx.stroke();
+      for (const [ox,oy] of [[18,18],[W-18,18],[18,H-18],[W-18,H-18]]) {
+        ctx.fillStyle = '#c8a050';
+        ctx.beginPath(); ctx.arc(ox, oy, 4, 0, Math.PI*2); ctx.fill();
+      }
+
+      // ── figure ──
+      const fx = 100, fy = 330;
+      // sandals
+      ctx.fillStyle = '#8a6030'; ctx.strokeStyle = '#5a3a10'; ctx.lineWidth = 1;
+      rr(fx-19,fy-7,14,6,2); ctx.fill(); ctx.stroke();
+      rr(fx+5,fy-7,14,6,2);  ctx.fill(); ctx.stroke();
+      // legs
+      ctx.strokeStyle = '#c89060'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(fx-7,fy-7); ctx.lineTo(fx-5,fy-60); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(fx+7,fy-7); ctx.lineTo(fx+5,fy-60); ctx.stroke();
+      // robe body
+      ctx.fillStyle = '#e0d8c0'; ctx.strokeStyle = '#9a9070'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(fx-27,fy-58); ctx.lineTo(fx-27,fy-135);
+      ctx.quadraticCurveTo(fx,fy-148,fx+27,fy-135);
+      ctx.lineTo(fx+27,fy-58); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = 'rgba(120,110,80,.22)'; ctx.lineWidth = 1;
+      for (const ox of [-13,0,13]) {
+        ctx.beginPath(); ctx.moveTo(fx+ox,fy-142); ctx.lineTo(fx+ox*.7,fy-58); ctx.stroke();
+      }
+      // right arm
+      ctx.strokeStyle = '#c89060'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(fx+25,fy-118); ctx.quadraticCurveTo(fx+52,fy-130,fx+62,fy-112); ctx.stroke();
+      // left arm + staff
+      ctx.beginPath(); ctx.moveTo(fx-25,fy-118); ctx.lineTo(fx-47,fy-103); ctx.stroke();
+      ctx.strokeStyle = '#7a5520'; ctx.lineWidth = 3; ctx.lineCap = 'butt';
+      ctx.beginPath(); ctx.moveTo(fx-51,fy-103); ctx.lineTo(fx-51,fy-4); ctx.stroke();
+      // head
+      ctx.fillStyle = '#e8c090'; ctx.strokeStyle = '#b07840'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(fx,fy-160,22,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      // white hair top
+      ctx.fillStyle = '#f0ece0';
+      ctx.beginPath(); ctx.arc(fx,fy-170,18,Math.PI+.35,-.35); ctx.closePath(); ctx.fill();
+      // side hair
+      ctx.fillStyle = '#e8e0d0';
+      for (const sx of [-1,1]) {
+        ctx.beginPath();
+        ctx.moveTo(fx+sx*22,fy-168);
+        ctx.quadraticCurveTo(fx+sx*30,fy-153,fx+sx*23,fy-141);
+        ctx.lineTo(fx+sx*15,fy-141); ctx.closePath(); ctx.fill();
+      }
+      // beard
+      ctx.fillStyle = '#e8e0d0'; ctx.strokeStyle = '#c0b898'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(fx-14,fy-146);
+      ctx.quadraticCurveTo(fx-20,fy-120,fx-8,fy-110);
+      ctx.quadraticCurveTo(fx,fy-106,fx+8,fy-110);
+      ctx.quadraticCurveTo(fx+20,fy-120,fx+14,fy-146);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = 'rgba(170,158,128,.45)'; ctx.lineWidth = 1;
+      for (const [x1,y1,x2,y2] of [
+        [fx-8,fy-140,fx-4,fy-112],[fx,fy-142,fx,fy-109],[fx+8,fy-140,fx+4,fy-112]
+      ]) { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
+      // eyes
+      ctx.fillStyle = '#3a2818';
+      ctx.beginPath(); ctx.arc(fx-7,fy-163,2.5,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(fx+7,fy-163,2.5,0,Math.PI*2); ctx.fill();
+      // bushy eyebrows
+      ctx.strokeStyle = '#888070'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(fx-12,fy-170); ctx.lineTo(fx-3,fy-168); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(fx+12,fy-170); ctx.lineTo(fx+3,fy-168); ctx.stroke();
+
+      // ── text ──
+      const tx = 178;
+      ctx.textAlign = 'left'; ctx.fillStyle = '#2a1a08';
+      ctx.font = 'bold 18px Georgia,serif';
+      ctx.fillText('Archimedes says:', tx, 42);
+      ctx.font = 'italic 13px Georgia,serif'; ctx.fillStyle = '#4a3020';
+      ctx.fillText('“Give me a place to stand,', tx, 63);
+      ctx.fillText('and I shall move the world!”', tx, 80);
+      ctx.strokeStyle = '#c8a050'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(tx,88); ctx.lineTo(W-20,88); ctx.stroke();
+      ctx.font = '13.5px Segoe UI'; ctx.fillStyle = '#2a3820';
+      const lines = [
+        'Congratulations, young scholar!',
+        '',
+        'You have mastered the lever and',
+        'discovered the secret of balance.',
+        '',
+        'Equal torques mean equilibrium.',
+      ];
+      lines.forEach((ln, i) => ctx.fillText(ln, tx, 104 + i*20));
+      ctx.strokeStyle = '#c8a050'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(tx,228); ctx.lineTo(W-20,228); ctx.stroke();
+      ctx.font = '13px Segoe UI'; ctx.fillStyle = '#334';
+      ctx.fillText('The secret password is:', tx, 248);
+      ctx.font = 'bold 24px "Courier New",monospace'; ctx.fillStyle = '#1a3a8a';
+      ctx.fillText('EQUILIBRIUM', tx, 280);
+      // 10 gold stars
+      ctx.font = '17px serif'; ctx.fillStyle = '#c8a050';
+      for (let i = 0; i < 10; i++) ctx.fillText('★', tx + i*21, 312);
+    }
+
+    // ── Main draw ────────────────────────────────────────────────
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      if (state === 'game_won') { drawArchimedes(); return; }
+      drawBg();
+      drawFulcrum();
+      drawSupports();
+      drawPlank();
+      drawKit();
+      drawLvlCounter();
+      drawStatus();
+      drawActionBtn();
+      if (drag) {
+        ctx.save(); ctx.globalAlpha = .88;
+        ctx.translate(drag.mx, drag.my + (drag.m===5?17:34)/2);
+        drawBrick(drag.m, false); ctx.restore();
+      }
+    }
+
+    // ── Animation loop ───────────────────────────────────────────
+    let lastTs = null, acc = 0;
+    function frame(ts) {
+      if (lastTs === null) lastTs = ts;
+      const dt = Math.min((ts - lastTs) / 1000, 0.05); lastTs = ts;
+      acc += dt; while (acc > 1/240) { step(1/240); acc -= 1/240; }
+      if (state === 'released') { rtimer++; if (rtimer >= 80) state = pResult; }
+      draw();
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    // ── Input ─────────────────────────────────────────────────────
+    const cpos = e => {
+      const r = canvas.getBoundingClientRect();
+      return [(e.clientX-r.left)/r.width*W, (e.clientY-r.top)/r.height*H];
+    };
+    const overKit = () => drag && inR(drag.mx, drag.my, KIT);
+    function updSnap() {
+      snap = null;
+      if (!drag || state !== 'placing') return;
+      if (overKit()) return;
+      const [rx, ry] = p2(drag.mx, drag.my);
+      if (Math.abs(rx) <= HALF+30 && ry > -180 && ry < BO+PT+60) {
+        let p = Math.round(rx / S / SNAP) * SNAP;
+        if (p === 0) p = rx >= 0 ? SNAP : -SNAP;
+        snap = Math.max(-XMAX, Math.min(XMAX, p));
+      }
+    }
+    function hitCld(mx, my) {
+      if (state !== 'placing') return null;
+      const items = layout(); const [rx, ry] = p2(mx, my);
+      for (let i = items.length-1; i >= 0; i--) {
+        const it = items[i]; if (it.b.fx) continue;
+        const x0 = it.b.pos*S-23, y1 = BO-it.base, y0 = y1-it.bh;
+        if (rx>=x0-4 && rx<=x0+46+4 && ry>=y0-4 && ry<=y1+4) return it;
+      }
+      return null;
+    }
+    canvas.addEventListener('pointerdown', e => {
+      if (drag) return;
+      const [mx, my] = cpos(e); canvas.setPointerCapture(e.pointerId);
+      if (state === 'game_won') return;
+      if (inR(mx, my, BTN)) {
+        if      (state === 'placing') { supUp = false; state = 'released'; rtimer = 0; pResult = Math.abs(netM()) < 0.1 ? 'won' : 'lost'; }
+        else if (state === 'won')     { if (lvl < 9) loadLvl(lvl+1); else state = 'game_won'; }
+        else if (state === 'lost')    { loadLvl(lvl); }
+        return;
+      }
+      if (state !== 'placing') return;
+      for (const r of kitR) {
+        if (inR(mx, my, r)) {
+          const b = cldB.find(b => b.id === r.id);
+          if (b) { drag = {id:b.id, m:b.m, mx, my}; updSnap(); } return;
+        }
+      }
+      const it = hitCld(mx, my);
+      if (it) {
+        const b = cldB.find(b => b.id === it.b.id);
+        if (b) { b.placed = false; b.pos = null; drag = {id:b.id, m:b.m, mx, my}; updSnap(); }
+      }
+    });
+    canvas.addEventListener('pointermove', e => {
+      const [mx, my] = cpos(e);
+      if (drag) { drag.mx = mx; drag.my = my; updSnap(); canvas.style.cursor = 'grabbing'; return; }
+      const onBtn = (state === 'placing' || state === 'won' || state === 'lost') && inR(mx, my, BTN);
+      const onCld = state === 'placing' && (hitCld(mx,my) !== null || kitR.some(r => inR(mx,my,r)));
+      canvas.style.cursor = onBtn ? 'pointer' : onCld ? 'grab' : 'default';
+    });
+    function endDrag() {
+      if (!drag) return;
+      if (!overKit() && snap !== null && state === 'placing') {
+        const b = cldB.find(b => b.id === drag.id);
+        if (b) { b.placed = true; b.pos = snap; }
+      }
+      drag = null; snap = null; canvas.style.cursor = 'default';
+    }
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+  })();
+  </script>
+</body>
+</html>
