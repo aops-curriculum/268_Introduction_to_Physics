@@ -6,22 +6,53 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 700px; height: 470px; overflow: hidden;
+      position: relative;
+      width: 460px; height: 470px; overflow: hidden;
       background: #f5f5f5;
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none; -webkit-user-select: none;
     }
     canvas { display: block; touch-action: none; }
+    #zoom-bar {
+      position: absolute;
+      display: flex; align-items: center; gap: 5px;
+      background: rgba(255,255,255,0.93);
+      border: 1px solid rgba(0,0,0,0.14);
+      border-radius: 6px;
+      padding: 3px 8px;
+      z-index: 2;
+      pointer-events: auto;
+      white-space: nowrap;
+    }
+    #zoom-bar label { font-size: 11px; color: #2c3540; }
+    #zoom-bar input[type=range] { width: 96px; cursor: pointer; }
+    #zoom-val { font: bold 11px 'Segoe UI', sans-serif; color: #2c3540; min-width: 30px; }
+    #reset-view {
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: #b0b8c4;
+      border: 1px solid #8a9aaa;
+      color: #fff;
+      font: bold 10px 'Segoe UI', sans-serif;
+      cursor: pointer;
+    }
+    #reset-view.active { background: #e8762d; border-color: #bf5a18; }
   </style>
 </head>
 <body>
-<canvas id="c" width="700" height="470"></canvas>
+<canvas id="c" width="460" height="470"></canvas>
+<div id="zoom-bar">
+  <label for="zoom-slider">Zoom</label>
+  <input type="range" id="zoom-slider" min="1" max="4" step="0.01" value="1">
+  <span id="zoom-val">1.0×</span>
+  <button id="reset-view">Reset View</button>
+</div>
 <script>
 (() => {
   'use strict';
 
-  // ── Design constants (all layout in 700×470 design units) ──────────────
-  const W = 700, H = 470;
+  // ── Design constants (all layout in 460×470 design units) ──────────────
+  const W = 460, H = 470;
   const PXCM = 4.2;
   const ANCHOR_Y = 32;
   const L0 = 50;
@@ -31,7 +62,6 @@
   const K_DEFAULT = 0.100 * G / 0.147;
   const DAMP = 0.14;
   const DT = 1 / 240;
-  const SLOW_FACTOR = 0.25;
   const HOOK_H = 8;
   const DETACH_DX = 48;
   const SNAP_R = 34;
@@ -49,9 +79,7 @@
     { x: 255, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
   ];
 
-  const massDefs = [
-    { m: 0.100, label: '100 g' },
-  ];
+  const massDefs = [{ m: 0.100, label: '100 g' }];
   const masses = [];
   {
     let xCursor = 240;
@@ -69,10 +97,9 @@
   }
 
   // ── UI state ────────────────────────────────────────────────────────────
-  const checks = { unstretched: false, resting: false };
   const ruler = { x: 8, y: 54 };
   const RUL_W = 38, RUL_LEN = 90 * PXCM, RUL_H = RUL_LEN + 12;
-  let paused = false, hintDone = false;
+  let hintDone = false;
   let drag = null;
 
   // ── Zoom / Pan state ────────────────────────────────────────────────────
@@ -80,20 +107,8 @@
   const ZOOM_MIN = 1, ZOOM_MAX = 4;
   let zoom = 1, panX = 0, panY = 0;
 
-  // ── Fixed control geometry (canvas design coords, unaffected by zoom) ───
-  const P1 = { x: 452, y: 12, w: 240, h: 70 };
-  const ROWS = [
-    { key: 'unstretched', label: 'Unstretched Length', color: '#3a6fd8', y: 34 },
-    { key: 'resting',     label: 'Resting Position',   color: '#2e9e44', y: 60 },
-  ];
-  const PAUSE = { x: 600, y: 432, r: 13 };
-  const RESET = { x: 652, y: 432, r: 15 };
-
-  // Zoom panel: right column, below P1 (which ends at y=82), with 4px gap
-  const ZC      = { x: 452, y: 86, w: 240, h: 46 };   // panel
-  const ZSL     = { x: 498, y: 109, w: 90 };           // slider track, y = centerline
-  const ZRESET  = { x: 622, y: 98,  w: 62,  h: 22 };  // Reset View button
-  const ZOOM_THUMB_R = 7;
+  // ── Fixed control geometry (in unzoomed canvas design coords) ───────────
+  const RESET = { x: 430, y: 434, r: 12 };
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -117,6 +132,7 @@
   // ── Canvas + scale-to-iframe-width ──────────────────────────────────────
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
+  const zoomBar = document.getElementById('zoom-bar');
   let scale = 1, dpr = 1;
   function fit() {
     const vw = window.innerWidth || W;
@@ -129,16 +145,17 @@
     canvas.style.height = (H * s) + 'px';
     document.body.style.width  = (W * s) + 'px';
     document.body.style.height = (H * s) + 'px';
+    // Position zoom bar just below the ceiling bar, at the left
+    zoomBar.style.top  = Math.round(34 * s) + 'px';
+    zoomBar.style.left = Math.round(8 * s) + 'px';
   }
   window.addEventListener('resize', fit);
 
   // ── Coordinate helpers ──────────────────────────────────────────────────
-  // Canvas coords: design units (0..W, 0..H), ignoring zoom/pan
   const toCanvas = e => {
     const r = canvas.getBoundingClientRect();
     return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
   };
-  // World coords: design units accounting for zoom/pan
   const toWorld = e => {
     const [cx, cy] = toCanvas(e);
     return [(cx + panX) / zoom, (cy + panY) / zoom];
@@ -150,18 +167,35 @@
     panY = clamp(panY, 0, Math.max(0, H * (zoom - 1)));
   }
 
-  // Zoom centered on canvas point (cx, cy) so that world point stays fixed
   function applyZoom(newZoom, cx, cy) {
     newZoom = clamp(newZoom, ZOOM_MIN, ZOOM_MAX);
-    const wx = (cx + panX) / zoom;
-    const wy = (cy + panY) / zoom;
+    const wx = (cx + panX) / zoom, wy = (cy + panY) / zoom;
     panX = wx * newZoom - cx;
     panY = wy * newZoom - cy;
     zoom = newZoom;
     clampPan();
+    syncControls();
   }
 
-  function resetView() { zoom = 1; panX = 0; panY = 0; }
+  function resetView() { zoom = 1; panX = 0; panY = 0; syncControls(); }
+
+  // ── HTML zoom control sync ──────────────────────────────────────────────
+  const zoomSlider = document.getElementById('zoom-slider');
+  const zoomVal    = document.getElementById('zoom-val');
+  const resetViewBtn = document.getElementById('reset-view');
+
+  function syncControls() {
+    zoomSlider.value = zoom;
+    zoomVal.textContent = zoom.toFixed(1) + '×';
+    const active = zoom > 1.001 || panX > 0.5 || panY > 0.5;
+    resetViewBtn.classList.toggle('active', active);
+  }
+
+  zoomSlider.addEventListener('input', () => {
+    applyZoom(parseFloat(zoomSlider.value), W / 2, H / 2);
+  });
+
+  resetViewBtn.addEventListener('click', resetView);
 
   // ── Physics ─────────────────────────────────────────────────────────────
   function step(dt) {
@@ -170,8 +204,7 @@
       if (s.massIdx >= 0 && !held) {
         const mass = masses[s.massIdx];
         const a = G - (s.k / mass.m) * s.ext - DAMP * s.v;
-        s.v += a * dt;
-        s.ext += s.v * dt;
+        s.v += a * dt; s.ext += s.v * dt;
         const fe = floorExt(mass);
         if (s.ext > fe) { s.ext = fe; if (s.v > 0) s.v = 0; }
         if (s.ext < MIN_EXT) { s.ext = MIN_EXT; if (s.v < 0) s.v = 0; }
@@ -210,8 +243,7 @@
     const s = springs[si], mass = masses[mi];
     s.massIdx = mi; mass.attached = si;
     s.ext = clamp(extFromEndY(mass.topY + 2), MIN_EXT, floorExt(mass));
-    s.v = 0; mass.vy = 0;
-    hintDone = true;
+    s.v = 0; mass.vy = 0; hintDone = true;
   }
 
   function findSnap(mass) {
@@ -233,9 +265,8 @@
       mass.topY = FLOOR_Y - HOOK_H - mass.h;
       mass.vy = 0; mass.attached = -1;
     }
-    checks.unstretched = checks.resting = false;
     ruler.x = 8; ruler.y = 54;
-    paused = false; hintDone = false;
+    hintDone = false;
   }
 
   // ── Hit testing ─────────────────────────────────────────────────────────
@@ -265,24 +296,10 @@
     const [wx, wy] = toWorld(e);
     canvas.setPointerCapture(e.pointerId);
 
-    // Fixed UI — use canvas coords
+    // Fixed UI (canvas coords)
     if (dist(cx, cy, RESET.x, RESET.y) <= RESET.r + 3) { resetAll(); return; }
-    if (dist(cx, cy, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) { paused = !paused; return; }
-    for (const row of ROWS) {
-      if (inRect(cx, cy, P1.x + 6, row.y - 12, P1.w - 12, 24)) {
-        checks[row.key] = !checks[row.key]; return;
-      }
-    }
-    if (inRect(cx, cy, ZRESET.x, ZRESET.y, ZRESET.w, ZRESET.h)) { resetView(); return; }
-    // Zoom slider thumb / track
-    if (Math.abs(cy - ZSL.y) <= ZOOM_THUMB_R + 4 &&
-        cx >= ZSL.x - ZOOM_THUMB_R && cx <= ZSL.x + ZSL.w + ZOOM_THUMB_R) {
-      const frac = clamp((cx - ZSL.x) / ZSL.w, 0, 1);
-      applyZoom(ZOOM_MIN + frac * (ZOOM_MAX - ZOOM_MIN), W / 2, H / 2);
-      drag = { type: 'slider' }; return;
-    }
 
-    // World objects — use world coords
+    // World objects (world coords)
     const mi = massHit(wx, wy);
     if (mi >= 0) {
       const mass = masses[mi];
@@ -294,8 +311,7 @@
     if (inRect(wx, wy, ruler.x, ruler.y, RUL_W, RUL_H)) {
       drag = { type: 'ruler', dx: wx - ruler.x, dy: wy - ruler.y }; return;
     }
-
-    // Background drag pans when zoomed in
+    // Background drag to pan when zoomed in
     if (zoom > 1) {
       drag = { type: 'pan', startCX: cx, startCY: cy, startPanX: panX, startPanY: panY };
     }
@@ -312,11 +328,6 @@
       panY = clamp(drag.startPanY - (cy - drag.startCY), 0, Math.max(0, H * (zoom - 1)));
       return;
     }
-    if (drag.type === 'slider') {
-      const frac = clamp((cx - ZSL.x) / ZSL.w, 0, 1);
-      applyZoom(ZOOM_MIN + frac * (ZOOM_MAX - ZOOM_MIN), W / 2, H / 2);
-      return;
-    }
     if (drag.type === 'ruler') {
       ruler.x = clamp(wx - drag.dx, -RUL_W + 16, W - 16);
       ruler.y = clamp(wy - drag.dy, -RUL_H + 30, H - 30);
@@ -328,12 +339,10 @@
         const s = springs[mass.attached];
         const desiredCx = wx - drag.dx;
         if (Math.abs(desiredCx - s.x) > DETACH_DX) {
-          s.massIdx = -1; s.v = 0;
-          mass.attached = -1;
+          s.massIdx = -1; s.v = 0; mass.attached = -1;
           mass.cx = clamp(desiredCx, 16, W - 16);
           mass.topY = clamp(wy - drag.dy, 6, H - 40);
-          drag.pull = 0;
-          drag.snap = findSnap(mass);
+          drag.pull = 0; drag.snap = findSnap(mass);
         } else {
           drag.pull = (desiredCx - s.x) * 0.35;
           s.ext = clamp(extFromEndY((wy - drag.dy) + 2), MIN_EXT, floorExt(mass));
@@ -343,12 +352,8 @@
         mass.cx = clamp(wx - drag.dx, 16, W - 16);
         mass.topY = clamp(wy - drag.dy, 6, H - 40);
         const si = findSnap(mass);
-        if (si >= 0) {
-          attach(si, drag.i);
-          drag.pull = 0; drag.snap = -1;
-        } else {
-          drag.snap = si;
-        }
+        if (si >= 0) { attach(si, drag.i); drag.pull = 0; drag.snap = -1; }
+        else drag.snap = si;
       }
     }
   });
@@ -360,7 +365,7 @@
       if (mass.attached < 0) {
         const si = findSnap(mass);
         if (si >= 0) attach(si, drag.i);
-        else mass.cx = clamp(mass.cx, 70, 430);
+        else mass.cx = clamp(mass.cx, 70, W - 30);
       }
     }
     drag = null;
@@ -368,7 +373,6 @@
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
-  // Mouse wheel zooms centered on the cursor
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     const [cx, cy] = toCanvas(e);
@@ -377,23 +381,10 @@
 
   function updateCursor(cx, cy, wx, wy) {
     let c = 'default';
-    if (dist(cx, cy, RESET.x, RESET.y) <= RESET.r + 3 ||
-        dist(cx, cy, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) {
-      c = 'pointer';
-    } else if (inRect(cx, cy, ZRESET.x, ZRESET.y, ZRESET.w, ZRESET.h)) {
-      c = 'pointer';
-    } else if (Math.abs(cy - ZSL.y) <= ZOOM_THUMB_R + 4 &&
-               cx >= ZSL.x - ZOOM_THUMB_R && cx <= ZSL.x + ZSL.w + ZOOM_THUMB_R) {
-      c = 'pointer';
-    } else {
-      let done = false;
-      for (const row of ROWS) {
-        if (inRect(cx, cy, P1.x + 6, row.y - 12, P1.w - 12, 24)) { c = 'pointer'; done = true; break; }
-      }
-      if (!done && massHit(wx, wy) >= 0) { c = 'grab'; done = true; }
-      if (!done && inRect(wx, wy, ruler.x, ruler.y, RUL_W, RUL_H)) { c = 'grab'; done = true; }
-      if (!done && zoom > 1) c = 'grab';
-    }
+    if (dist(cx, cy, RESET.x, RESET.y) <= RESET.r + 3) c = 'pointer';
+    else if (massHit(wx, wy) >= 0) c = 'grab';
+    else if (inRect(wx, wy, ruler.x, ruler.y, RUL_W, RUL_H)) c = 'grab';
+    else if (zoom > 1) c = 'grab';
     canvas.style.cursor = c;
   }
 
@@ -420,18 +411,27 @@
 
   function drawRefLines() {
     ctx.save();
-    if (checks.unstretched) {
-      const y = ANCHOR_Y + L0 * PXCM;
-      ctx.setLineDash([7, 5]); ctx.strokeStyle = '#3a6fd8'; ctx.lineWidth = 1.8;
-      ctx.beginPath(); ctx.moveTo(108, y); ctx.lineTo(402, y); ctx.stroke();
-    }
-    if (checks.resting) {
+    ctx.lineCap = 'butt';
+
+    // Unstretched / natural length — always shown
+    const uy = ANCHOR_Y + L0 * PXCM;
+    ctx.setLineDash([7, 5]); ctx.strokeStyle = '#3a6fd8'; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(108, uy); ctx.lineTo(402, uy); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#3a6fd8'; ctx.font = '10px Segoe UI'; ctx.textAlign = 'left';
+    ctx.fillText('Natural Length', springs[0].x + 22, uy - 3);
+
+    // Resting position — shown only when a mass is attached
+    for (const s of springs) {
+      if (s.massIdx < 0) continue;
+      const ry = ANCHOR_Y + (L0 + eqExt(s) * 100) * PXCM;
       ctx.setLineDash([5, 4]); ctx.strokeStyle = '#2e9e44'; ctx.lineWidth = 2;
-      for (const s of springs) {
-        const y = ANCHOR_Y + (L0 + eqExt(s) * 100) * PXCM;
-        ctx.beginPath(); ctx.moveTo(s.x - 52, y); ctx.lineTo(s.x + 52, y); ctx.stroke();
-      }
+      ctx.beginPath(); ctx.moveTo(s.x - 52, ry); ctx.lineTo(s.x + 52, ry); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#2e9e44'; ctx.font = '10px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillText('Resting Position', s.x + 22, ry - 3);
     }
+
     ctx.restore();
   }
 
@@ -524,109 +524,24 @@
     ctx.restore();
   }
 
-  function drawPanels() {
-    for (const p of [P1]) {
-      rr(p.x, p.y, p.w, p.h, 8);
-      ctx.fillStyle = 'rgba(255,255,255,0.93)'; ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1; ctx.stroke();
-    }
-    for (const row of ROWS) {
-      const bx = 464, by = row.y - 7;
-      rr(bx, by, 14, 14, 3);
-      ctx.fillStyle = checks[row.key] ? '#3a78c2' : '#fff'; ctx.fill();
-      ctx.strokeStyle = checks[row.key] ? '#2c5f9e' : '#98a2ac'; ctx.lineWidth = 1.2; ctx.stroke();
-      if (checks[row.key]) {
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(bx + 3, by + 7.5); ctx.lineTo(bx + 6, by + 10.5); ctx.lineTo(bx + 11, by + 3.5);
-        ctx.stroke();
-      }
-      ctx.fillStyle = '#2c3540'; ctx.font = '11.5px Segoe UI'; ctx.textAlign = 'left';
-      ctx.fillText(row.label, 486, row.y + 4);
-      ctx.save();
-      ctx.setLineDash([6, 4]); ctx.strokeStyle = row.color; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(648, row.y); ctx.lineTo(682, row.y); ctx.stroke();
-      ctx.restore();
-    }
-  }
-
-  function drawZoomControl() {
-    // Panel
-    rr(ZC.x, ZC.y, ZC.w, ZC.h, 8);
-    ctx.fillStyle = 'rgba(255,255,255,0.93)'; ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1; ctx.stroke();
-
-    // "Zoom:" label
-    ctx.fillStyle = '#2c3540'; ctx.font = '11.5px Segoe UI'; ctx.textAlign = 'left';
-    ctx.fillText('Zoom:', ZC.x + 8, ZSL.y + 4);
-
-    // Slider track (background)
-    ctx.fillStyle = '#d0d7e0';
-    rr(ZSL.x, ZSL.y - 3, ZSL.w, 6, 3); ctx.fill();
-
-    // Slider track (filled)
-    const frac = (zoom - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN);
-    if (frac > 0) {
-      ctx.fillStyle = '#3a78c2';
-      rr(ZSL.x, ZSL.y - 3, ZSL.w * frac, 6, 3); ctx.fill();
-    }
-
-    // Slider thumb
-    const thumbX = ZSL.x + ZSL.w * frac;
-    ctx.beginPath(); ctx.arc(thumbX, ZSL.y, ZOOM_THUMB_R, 0, 2 * Math.PI);
-    ctx.fillStyle = '#3a78c2'; ctx.fill();
-    ctx.strokeStyle = '#2c5f9e'; ctx.lineWidth = 1.5; ctx.stroke();
-
-    // Zoom value label
-    ctx.fillStyle = '#2c3540'; ctx.font = 'bold 11px Segoe UI'; ctx.textAlign = 'left';
-    ctx.fillText(zoom.toFixed(1) + '×', ZSL.x + ZSL.w + 6, ZSL.y + 4);
-
-    // Reset View button (orange when view is not default, grey otherwise)
-    rr(ZRESET.x, ZRESET.y, ZRESET.w, ZRESET.h, 5);
-    const viewChanged = zoom !== 1 || panX !== 0 || panY !== 0;
-    ctx.fillStyle = viewChanged ? '#e8762d' : '#b0b8c4'; ctx.fill();
-    ctx.strokeStyle = viewChanged ? '#bf5a18' : '#8a9aaa'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Segoe UI'; ctx.textAlign = 'center';
-    ctx.fillText('Reset View', ZRESET.x + ZRESET.w / 2, ZRESET.y + ZRESET.h / 2 + 3.5);
-  }
-
-  function drawTimeControls() {
-    ctx.beginPath(); ctx.arc(PAUSE.x, PAUSE.y, PAUSE.r, 0, 2 * Math.PI);
-    ctx.fillStyle = '#3a78c2'; ctx.fill();
-    ctx.strokeStyle = '#2c5f9e'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#fff';
-    if (paused) {
-      ctx.beginPath();
-      ctx.moveTo(PAUSE.x - 3.5, PAUSE.y - 6);
-      ctx.lineTo(PAUSE.x + 6.5, PAUSE.y);
-      ctx.lineTo(PAUSE.x - 3.5, PAUSE.y + 6);
-      ctx.closePath(); ctx.fill();
-    } else {
-      ctx.fillRect(PAUSE.x - 5, PAUSE.y - 6, 3.4, 12);
-      ctx.fillRect(PAUSE.x + 1.6, PAUSE.y - 6, 3.4, 12);
-    }
-  }
-
   function drawReset() {
     ctx.beginPath(); ctx.arc(RESET.x, RESET.y, RESET.r, 0, 2 * Math.PI);
     ctx.fillStyle = '#e8762d'; ctx.fill();
     ctx.strokeStyle = '#bf5a18'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Segoe UI'; ctx.textAlign = 'center';
-    ctx.fillText('↺', RESET.x, RESET.y + 6);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 15px Segoe UI'; ctx.textAlign = 'center';
+    ctx.fillText('↺', RESET.x, RESET.y + 5.5);
   }
 
   function draw() {
-    // Clear canvas (in unzoomed design space)
-    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    const s = scale * dpr;
+
+    // Clear canvas
+    ctx.setTransform(s, 0, 0, s, 0, 0);
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, W, H);
 
-    // Zoomable scene — physics content scrolls/zooms
-    ctx.save();
-    ctx.setTransform(
-      scale * dpr * zoom, 0, 0, scale * dpr * zoom,
-      -panX * scale * dpr, -panY * scale * dpr
-    );
+    // Zoomable scene — explicit setTransform, no save/restore wrapper
+    ctx.setTransform(s * zoom, 0, 0, s * zoom, -panX * s, -panY * s);
     drawBarAndShelf();
     drawRefLines();
     drawSpring(springs[0]);
@@ -635,13 +550,9 @@
       drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
     }
     drawSnapHighlight();
-    ctx.restore();
 
-    // Fixed UI overlay — always at same canvas position regardless of zoom
-    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
-    drawPanels();
-    drawZoomControl();
-    drawTimeControls();
+    // Fixed UI — reset to unzoomed transform
+    ctx.setTransform(s, 0, 0, s, 0, 0);
     drawReset();
   }
 
@@ -651,13 +562,12 @@
     if (lastTs == null) lastTs = ts;
     const dt = Math.min((ts - lastTs) / 1000, 0.05);
     lastTs = ts;
-    if (!paused) {
-      acc += dt;
-      if (acc > 0.25) acc = 0.25;
-      while (acc >= DT) { step(DT); acc -= DT; }
-    }
+    acc += dt;
+    if (acc > 0.25) acc = 0.25;
+    while (acc >= DT) { step(DT); acc -= DT; }
     sync();
     draw();
+    syncControls();
     requestAnimationFrame(frame);
   }
 
@@ -673,17 +583,14 @@
     },
     settle() { this.attach(0); springs[0].v = 0; },
     ruler(rx, ry) { ruler.x = rx; ruler.y = ry; },
-    checks(u, r) { checks.unstretched = !!u; checks.resting = !!r; },
     unstretchedY() { return ANCHOR_Y + L0 * PXCM; },
     PXCM, ANCHOR_Y, L0,
-    pause(p) { paused = !!p; },
     setState(t) {
       const s = springs[0], m = masses[0];
       if (s.massIdx < 0) { s.massIdx = 0; m.attached = 0; hintDone = true; }
-      paused = true;
       const eq = m.m * G / s.k;
       const w0 = Math.sqrt(s.k / m.m);
-      const alpha = DAMP / 2;
+      const alpha = 0.14 / 2;
       const wd = Math.sqrt(w0 * w0 - alpha * alpha);
       const decay = Math.exp(-alpha * t);
       s.ext = eq * (1 - decay * (Math.cos(wd * t) + (alpha / wd) * Math.sin(wd * t)));
@@ -694,7 +601,7 @@
     period() {
       const s = springs[0], m = masses[0];
       const w0 = Math.sqrt(s.k / m.m);
-      const alpha = DAMP / 2;
+      const alpha = 0.14 / 2;
       return 2 * Math.PI / Math.sqrt(w0 * w0 - alpha * alpha);
     },
   };
