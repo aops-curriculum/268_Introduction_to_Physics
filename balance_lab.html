@@ -102,14 +102,16 @@
       const str = Q.get('place');
       if (!str) return;
       const map = { '5': 'b5', '10': 'b10' };
+      const used = new Set();
       for (const tok of str.split(',')) {
         const m = tok.trim().match(/^([a-z0-9]+)@(-?\d*\.?\d+)$/i);
         if (!m) continue;
         const t = map[m[1].toLowerCase()];
-        if (!t) continue;
+        if (!t || used.has(t)) continue;          // one of each
         let p = Math.round(parseFloat(m[2]) / SNAP) * SNAP;
         if (!isFinite(p) || p === 0) continue;
         p = Math.max(-XMAX, Math.min(XMAX, p));
+        used.add(t);
         init.placed.push({ type: t, pos: p });
       }
     })();
@@ -132,6 +134,10 @@
       drag = null; snapPos = null;
     }
     reset();
+
+    // A brick type is "in use" when it's on the plank or being dragged,
+    // so it disappears from the kit until it's returned.
+    const isUsed = id => (drag && drag.type === id) || placed.some(o => o.type === id);
 
     // ── Physics ──────────────────────────────────────────────
     const G = 9.8;
@@ -196,14 +202,18 @@
       }
       if (label) {
         const cy = -(n * 17) / 2 - 0.5;
-        ctx.font = 'bold 12px Arial';
+        ctx.font = 'bold 14px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(60,80,100,0.9)';
-        ctx.strokeText(label, 0, cy);
-        ctx.fillStyle = '#fff';
+        const tw = ctx.measureText(label).width;
+        const bw = tw + 10, bh = 18;
+        // lighter-gray plate behind the label for contrast against the brick
+        ctx.fillStyle = 'rgba(228,232,236,0.95)';
+        ctx.strokeStyle = 'rgba(80,100,120,0.45)';
+        ctx.lineWidth = 1;
+        rr(-bw / 2, cy - bh / 2, bw, bh, 3);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#000';
         ctx.fillText(label, 0, cy);
         ctx.textBaseline = 'alphabetic';
       }
@@ -423,6 +433,7 @@
       const scale = 0.5;
       ctx.font = '9.5px Segoe UI';
       KIT_ITEMS.forEach((id, i) => {
+        if (isUsed(id)) return;               // hide a brick once it's placed/dragging
         const [cx, by] = cells[i], t = TYPES[id];
         ctx.save(); ctx.translate(cx, by); ctx.scale(scale, scale); drawObj(id); ctx.restore();
         ctx.fillStyle = '#556';
@@ -479,9 +490,11 @@
       const r = canvas.getBoundingClientRect();
       return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H];
     };
+    const overKit = () => !init.clean && drag && inRect(drag.mx, drag.my, KITP);
     function updateSnap() {
       snapPos = null;
       if (!drag) return;
+      if (overKit()) return;                 // hovering the kit → return target, no plank snap
       const [rx, ry] = p2(drag.mx, drag.my);
       if (Math.abs(rx) <= HALF + 30 && ry > -170 && ry < BOARD_OFFSET + PT + 70) {
         let p = Math.round(rx / S / SNAP) * SNAP;
@@ -540,7 +553,8 @@
     });
     function endDrag() {
       if (!drag) return;
-      if (snapPos !== null) {
+      // Dropping over the kit (or anywhere off the plank) returns the brick to the box.
+      if (!overKit() && snapPos !== null) {
         placed.push({ type: drag.type, pos: snapPos });
         hintDone = true;
       }
