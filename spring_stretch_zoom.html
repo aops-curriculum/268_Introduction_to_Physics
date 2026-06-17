@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Spring Stretch</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 700px; height: 470px; overflow: hidden;
+      background: #f5f5f5;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+    canvas { display: block; touch-action: none; }
+  </style>
+</head>
+<body>
+<canvas id="c" width="700" height="470"></canvas>
+<script>
+(() => {
+  'use strict';
+
+  // ── Design constants (all layout in 700×470 design units) ──────────────
+  const W = 700, H = 470;
+  const PXCM = 4.2;
+  const ANCHOR_Y = 32;
+  const L0 = 50;
+  const FLOOR_Y = 448;
+  const G = 9.8;
+  const K_MIN = 3, K_MAX = 12;
+  const K_DEFAULT = 0.100 * G / 0.147;
+  const DAMP = 0.14;
+  const DT = 1 / 240;
+  const SLOW_FACTOR = 0.25;
+  const HOOK_H = 8;
+  const DETACH_DX = 48;
+  const SNAP_R = 34;
+  const MIN_EXT = -0.42;
+
+  const qs = new URLSearchParams(location.search);
+  const parseK = name => {
+    const v = parseFloat(qs.get(name));
+    return isFinite(v) ? Math.min(K_MAX, Math.max(K_MIN, v)) : K_DEFAULT;
+  };
+  const K1_INIT = parseK('k1');
+
+  // ── Scene objects ───────────────────────────────────────────────────────
+  const springs = [
+    { x: 255, k: K1_INIT, ext: 0, v: 0, massIdx: -1 },
+  ];
+
+  const massDefs = [
+    { m: 0.100, label: '100 g' },
+  ];
+  const masses = [];
+  {
+    let xCursor = 240;
+    for (const def of massDefs) {
+      const r = 14.5 * Math.cbrt(def.m / 0.1);
+      const h = 2.1 * r;
+      const cx = xCursor + r;
+      xCursor = cx + r + 12;
+      masses.push({
+        m: def.m, label: def.label, colors: def.colors || null,
+        r, h, homeCx: cx,
+        cx, topY: FLOOR_Y - HOOK_H - h, vy: 0, attached: -1,
+      });
+    }
+  }
+
+  // ── UI state ────────────────────────────────────────────────────────────
+  const checks = { unstretched: false, resting: false };
+  const ruler = { x: 8, y: 54 };
+  const RUL_W = 38, RUL_LEN = 90 * PXCM, RUL_H = RUL_LEN + 12;
+  let paused = false, hintDone = false;
+  let drag = null;
+
+  // ── Zoom / Pan state ────────────────────────────────────────────────────
+  // canvasX = worldX * zoom - panX  →  worldX = (canvasX + panX) / zoom
+  const ZOOM_MIN = 1, ZOOM_MAX = 4;
+  let zoom = 1, panX = 0, panY = 0;
+
+  // ── Fixed control geometry (canvas design coords, unaffected by zoom) ───
+  const P1 = { x: 452, y: 12, w: 240, h: 70 };
+  const ROWS = [
+    { key: 'unstretched', label: 'Unstretched Length', color: '#3a6fd8', y: 34 },
+    { key: 'resting',     label: 'Resting Position',   color: '#2e9e44', y: 60 },
+  ];
+  const PAUSE = { x: 600, y: 432, r: 13 };
+  const RESET = { x: 652, y: 432, r: 15 };
+
+  // Zoom panel: right column, below P1 (which ends at y=82), with 4px gap
+  const ZC      = { x: 452, y: 86, w: 240, h: 46 };   // panel
+  const ZSL     = { x: 498, y: 109, w: 90 };           // slider track, y = centerline
+  const ZRESET  = { x: 622, y: 98,  w: 62,  h: 22 };  // Reset View button
+  const ZOOM_THUMB_R = 7;
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+  const inRect = (mx, my, x, y, w, h) => mx >= x && mx <= x + w && my >= y && my <= y + h;
+  const springEndY = s => ANCHOR_Y + (L0 + s.ext * 100) * PXCM;
+  const extFromEndY = ey => ((ey - ANCHOR_Y) / PXCM - L0) / 100;
+  const floorExt = mass => ((FLOOR_Y - HOOK_H - mass.h - ANCHOR_Y) / PXCM - L0) / 100;
+  const eqExt = s => (s.massIdx >= 0 ? masses[s.massIdx].m * G / s.k : 0);
+
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // ── Canvas + scale-to-iframe-width ──────────────────────────────────────
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  let scale = 1, dpr = 1;
+  function fit() {
+    const vw = window.innerWidth || W;
+    let s = clamp(vw / W, 0.3, 2.4);
+    if (Math.abs(s - 1) < 0.03) s = 1;
+    scale = s; dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(W * s * dpr);
+    canvas.height = Math.round(H * s * dpr);
+    canvas.style.width  = (W * s) + 'px';
+    canvas.style.height = (H * s) + 'px';
+    document.body.style.width  = (W * s) + 'px';
+    document.body.style.height = (H * s) + 'px';
+  }
+  window.addEventListener('resize', fit);
+
+  // ── Coordinate helpers ──────────────────────────────────────────────────
+  // Canvas coords: design units (0..W, 0..H), ignoring zoom/pan
+  const toCanvas = e => {
+    const r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
+  };
+  // World coords: design units accounting for zoom/pan
+  const toWorld = e => {
+    const [cx, cy] = toCanvas(e);
+    return [(cx + panX) / zoom, (cy + panY) / zoom];
+  };
+
+  // ── Zoom helpers ────────────────────────────────────────────────────────
+  function clampPan() {
+    panX = clamp(panX, 0, Math.max(0, W * (zoom - 1)));
+    panY = clamp(panY, 0, Math.max(0, H * (zoom - 1)));
+  }
+
+  // Zoom centered on canvas point (cx, cy) so that world point stays fixed
+  function applyZoom(newZoom, cx, cy) {
+    newZoom = clamp(newZoom, ZOOM_MIN, ZOOM_MAX);
+    const wx = (cx + panX) / zoom;
+    const wy = (cy + panY) / zoom;
+    panX = wx * newZoom - cx;
+    panY = wy * newZoom - cy;
+    zoom = newZoom;
+    clampPan();
+  }
+
+  function resetView() { zoom = 1; panX = 0; panY = 0; }
+
+  // ── Physics ─────────────────────────────────────────────────────────────
+  function step(dt) {
+    for (const s of springs) {
+      const held = drag && drag.type === 'mass' && s.massIdx >= 0 && drag.i === s.massIdx;
+      if (s.massIdx >= 0 && !held) {
+        const mass = masses[s.massIdx];
+        const a = G - (s.k / mass.m) * s.ext - DAMP * s.v;
+        s.v += a * dt;
+        s.ext += s.v * dt;
+        const fe = floorExt(mass);
+        if (s.ext > fe) { s.ext = fe; if (s.v > 0) s.v = 0; }
+        if (s.ext < MIN_EXT) { s.ext = MIN_EXT; if (s.v < 0) s.v = 0; }
+      } else if (s.massIdx < 0 && s.ext !== 0) {
+        s.ext *= Math.exp(-10 * dt);
+        if (Math.abs(s.ext) < 2e-4) s.ext = 0;
+        s.v = 0;
+      }
+    }
+    for (let i = 0; i < masses.length; i++) {
+      const mass = masses[i];
+      if (mass.attached >= 0) continue;
+      if (drag && drag.type === 'mass' && drag.i === i) continue;
+      const floorTop = FLOOR_Y - HOOK_H - mass.h;
+      if (mass.topY < floorTop) {
+        mass.vy += G * 100 * PXCM * dt;
+        mass.topY += mass.vy * dt;
+        if (mass.topY >= floorTop) { mass.topY = floorTop; mass.vy = 0; }
+      } else { mass.topY = floorTop; mass.vy = 0; }
+    }
+  }
+
+  function sync() {
+    for (let si = 0; si < springs.length; si++) {
+      const s = springs[si];
+      if (s.massIdx >= 0) {
+        const mass = masses[s.massIdx];
+        const pull = (drag && drag.type === 'mass' && drag.i === s.massIdx) ? (drag.pull || 0) : 0;
+        mass.cx = s.x + pull;
+        mass.topY = springEndY(s) - 2;
+      }
+    }
+  }
+
+  function attach(si, mi) {
+    const s = springs[si], mass = masses[mi];
+    s.massIdx = mi; mass.attached = si;
+    s.ext = clamp(extFromEndY(mass.topY + 2), MIN_EXT, floorExt(mass));
+    s.v = 0; mass.vy = 0;
+    hintDone = true;
+  }
+
+  function findSnap(mass) {
+    for (let si = 0; si < springs.length; si++) {
+      const s = springs[si];
+      if (s.massIdx >= 0) continue;
+      if (dist(mass.cx, mass.topY + 2, s.x, springEndY(s)) < SNAP_R) return si;
+    }
+    return -1;
+  }
+
+  // ── Reset ───────────────────────────────────────────────────────────────
+  function resetAll() {
+    drag = null;
+    springs[0].k = K1_INIT;
+    for (const s of springs) { s.ext = 0; s.v = 0; s.massIdx = -1; }
+    for (const mass of masses) {
+      mass.cx = mass.homeCx;
+      mass.topY = FLOOR_Y - HOOK_H - mass.h;
+      mass.vy = 0; mass.attached = -1;
+    }
+    checks.unstretched = checks.resting = false;
+    ruler.x = 8; ruler.y = 54;
+    paused = false; hintDone = false;
+  }
+
+  // ── Hit testing ─────────────────────────────────────────────────────────
+  function massDrawOrder() {
+    const plain = [], att = [], drg = [];
+    for (let i = 0; i < masses.length; i++) {
+      if (drag && drag.type === 'mass' && drag.i === i) drg.push(i);
+      else if (masses[i].attached >= 0) att.push(i);
+      else plain.push(i);
+    }
+    return plain.concat(att, drg);
+  }
+  function massHit(wx, wy) {
+    const order = massDrawOrder();
+    for (let oi = order.length - 1; oi >= 0; oi--) {
+      const i = order[oi], mass = masses[i];
+      if (inRect(wx, wy, mass.cx - mass.r - 3, mass.topY - 3,
+                 2 * (mass.r + 3), HOOK_H + mass.h + 6)) return i;
+    }
+    return -1;
+  }
+
+  // ── Pointer events ──────────────────────────────────────────────────────
+  canvas.addEventListener('pointerdown', e => {
+    if (drag) return;
+    const [cx, cy] = toCanvas(e);
+    const [wx, wy] = toWorld(e);
+    canvas.setPointerCapture(e.pointerId);
+
+    // Fixed UI — use canvas coords
+    if (dist(cx, cy, RESET.x, RESET.y) <= RESET.r + 3) { resetAll(); return; }
+    if (dist(cx, cy, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) { paused = !paused; return; }
+    for (const row of ROWS) {
+      if (inRect(cx, cy, P1.x + 6, row.y - 12, P1.w - 12, 24)) {
+        checks[row.key] = !checks[row.key]; return;
+      }
+    }
+    if (inRect(cx, cy, ZRESET.x, ZRESET.y, ZRESET.w, ZRESET.h)) { resetView(); return; }
+    // Zoom slider thumb / track
+    if (Math.abs(cy - ZSL.y) <= ZOOM_THUMB_R + 4 &&
+        cx >= ZSL.x - ZOOM_THUMB_R && cx <= ZSL.x + ZSL.w + ZOOM_THUMB_R) {
+      const frac = clamp((cx - ZSL.x) / ZSL.w, 0, 1);
+      applyZoom(ZOOM_MIN + frac * (ZOOM_MAX - ZOOM_MIN), W / 2, H / 2);
+      drag = { type: 'slider' }; return;
+    }
+
+    // World objects — use world coords
+    const mi = massHit(wx, wy);
+    if (mi >= 0) {
+      const mass = masses[mi];
+      if (mass.attached >= 0) springs[mass.attached].v = 0;
+      mass.vy = 0;
+      drag = { type: 'mass', i: mi, dx: wx - mass.cx, dy: wy - mass.topY, pull: 0, snap: -1 };
+      return;
+    }
+    if (inRect(wx, wy, ruler.x, ruler.y, RUL_W, RUL_H)) {
+      drag = { type: 'ruler', dx: wx - ruler.x, dy: wy - ruler.y }; return;
+    }
+
+    // Background drag pans when zoomed in
+    if (zoom > 1) {
+      drag = { type: 'pan', startCX: cx, startCY: cy, startPanX: panX, startPanY: panY };
+    }
+  });
+
+  canvas.addEventListener('pointermove', e => {
+    const [cx, cy] = toCanvas(e);
+    const [wx, wy] = toWorld(e);
+    if (!drag) { updateCursor(cx, cy, wx, wy); return; }
+    canvas.style.cursor = 'grabbing';
+
+    if (drag.type === 'pan') {
+      panX = clamp(drag.startPanX - (cx - drag.startCX), 0, Math.max(0, W * (zoom - 1)));
+      panY = clamp(drag.startPanY - (cy - drag.startCY), 0, Math.max(0, H * (zoom - 1)));
+      return;
+    }
+    if (drag.type === 'slider') {
+      const frac = clamp((cx - ZSL.x) / ZSL.w, 0, 1);
+      applyZoom(ZOOM_MIN + frac * (ZOOM_MAX - ZOOM_MIN), W / 2, H / 2);
+      return;
+    }
+    if (drag.type === 'ruler') {
+      ruler.x = clamp(wx - drag.dx, -RUL_W + 16, W - 16);
+      ruler.y = clamp(wy - drag.dy, -RUL_H + 30, H - 30);
+      return;
+    }
+    if (drag.type === 'mass') {
+      const mass = masses[drag.i];
+      if (mass.attached >= 0) {
+        const s = springs[mass.attached];
+        const desiredCx = wx - drag.dx;
+        if (Math.abs(desiredCx - s.x) > DETACH_DX) {
+          s.massIdx = -1; s.v = 0;
+          mass.attached = -1;
+          mass.cx = clamp(desiredCx, 16, W - 16);
+          mass.topY = clamp(wy - drag.dy, 6, H - 40);
+          drag.pull = 0;
+          drag.snap = findSnap(mass);
+        } else {
+          drag.pull = (desiredCx - s.x) * 0.35;
+          s.ext = clamp(extFromEndY((wy - drag.dy) + 2), MIN_EXT, floorExt(mass));
+          s.v = 0;
+        }
+      } else {
+        mass.cx = clamp(wx - drag.dx, 16, W - 16);
+        mass.topY = clamp(wy - drag.dy, 6, H - 40);
+        const si = findSnap(mass);
+        if (si >= 0) {
+          attach(si, drag.i);
+          drag.pull = 0; drag.snap = -1;
+        } else {
+          drag.snap = si;
+        }
+      }
+    }
+  });
+
+  function endDrag() {
+    if (!drag) return;
+    if (drag.type === 'mass') {
+      const mass = masses[drag.i];
+      if (mass.attached < 0) {
+        const si = findSnap(mass);
+        if (si >= 0) attach(si, drag.i);
+        else mass.cx = clamp(mass.cx, 70, 430);
+      }
+    }
+    drag = null;
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  // Mouse wheel zooms centered on the cursor
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const [cx, cy] = toCanvas(e);
+    applyZoom(zoom * Math.exp(-e.deltaY * 0.001), cx, cy);
+  }, { passive: false });
+
+  function updateCursor(cx, cy, wx, wy) {
+    let c = 'default';
+    if (dist(cx, cy, RESET.x, RESET.y) <= RESET.r + 3 ||
+        dist(cx, cy, PAUSE.x, PAUSE.y) <= PAUSE.r + 3) {
+      c = 'pointer';
+    } else if (inRect(cx, cy, ZRESET.x, ZRESET.y, ZRESET.w, ZRESET.h)) {
+      c = 'pointer';
+    } else if (Math.abs(cy - ZSL.y) <= ZOOM_THUMB_R + 4 &&
+               cx >= ZSL.x - ZOOM_THUMB_R && cx <= ZSL.x + ZSL.w + ZOOM_THUMB_R) {
+      c = 'pointer';
+    } else {
+      let done = false;
+      for (const row of ROWS) {
+        if (inRect(cx, cy, P1.x + 6, row.y - 12, P1.w - 12, 24)) { c = 'pointer'; done = true; break; }
+      }
+      if (!done && massHit(wx, wy) >= 0) { c = 'grab'; done = true; }
+      if (!done && inRect(wx, wy, ruler.x, ruler.y, RUL_W, RUL_H)) { c = 'grab'; done = true; }
+      if (!done && zoom > 1) c = 'grab';
+    }
+    canvas.style.cursor = c;
+  }
+
+  // ── Drawing ─────────────────────────────────────────────────────────────
+  function drawBarAndShelf() {
+    let g = ctx.createLinearGradient(0, 14, 0, ANCHOR_Y);
+    g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
+    ctx.fillStyle = g;
+    rr(110, 14, 290, ANCHOR_Y - 14, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(60,40,20,0.6)';
+    for (const sx of [120, 390]) {
+      ctx.beginPath(); ctx.arc(sx, 23, 2.5, 0, 2 * Math.PI); ctx.fill();
+    }
+    g = ctx.createLinearGradient(0, FLOOR_Y, 0, FLOOR_Y + 10);
+    g.addColorStop(0, '#c89a64'); g.addColorStop(1, '#8a6238');
+    ctx.fillStyle = g;
+    rr(56, FLOOR_Y, 380, 10, 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.stroke();
+    ctx.fillStyle = '#8a6238';
+    ctx.fillRect(74, FLOOR_Y + 10, 12, 8);
+    ctx.fillRect(406, FLOOR_Y + 10, 12, 8);
+  }
+
+  function drawRefLines() {
+    ctx.save();
+    if (checks.unstretched) {
+      const y = ANCHOR_Y + L0 * PXCM;
+      ctx.setLineDash([7, 5]); ctx.strokeStyle = '#3a6fd8'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(108, y); ctx.lineTo(402, y); ctx.stroke();
+    }
+    if (checks.resting) {
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = '#2e9e44'; ctx.lineWidth = 2;
+      for (const s of springs) {
+        const y = ANCHOR_Y + (L0 + eqExt(s) * 100) * PXCM;
+        ctx.beginPath(); ctx.moveTo(s.x - 52, y); ctx.lineTo(s.x + 52, y); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawSpring(s) {
+    const x = s.x, ey = springEndY(s);
+    const yA = ANCHOR_Y + 9;
+    let yB = ey - 9; if (yB < yA + 6) yB = yA + 6;
+    const N = 11, R = 17, steps = 220;
+    const coil = () => {
+      ctx.beginPath();
+      ctx.moveTo(x, ANCHOR_Y);
+      ctx.lineTo(x, yA);
+      for (let j = 1; j <= steps; j++) {
+        const t = j / steps;
+        ctx.lineTo(x + R * Math.sin(t * N * 2 * Math.PI), yA + (yB - yA) * t);
+      }
+      ctx.lineTo(x, ey - 5);
+    };
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    coil(); ctx.strokeStyle = '#5f7d9e'; ctx.lineWidth = 3.2; ctx.stroke();
+    coil(); ctx.strokeStyle = '#a9c6e4'; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, ey - 2.5, 3.4, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#5f7d9e'; ctx.lineWidth = 2; ctx.stroke();
+  }
+
+  function drawRuler() {
+    const x = ruler.x, y = ruler.y;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.18)'; ctx.shadowBlur = 5;
+    ctx.shadowOffsetX = 1.5; ctx.shadowOffsetY = 1.5;
+    rr(x, y, RUL_W, RUL_H, 3);
+    ctx.fillStyle = '#fbf3cf'; ctx.fill();
+    ctx.restore();
+    rr(x, y, RUL_W, RUL_H, 3);
+    ctx.strokeStyle = '#b9a868'; ctx.lineWidth = 1; ctx.stroke();
+    const right = x + RUL_W;
+    ctx.fillStyle = '#5d5132'; ctx.strokeStyle = '#5d5132'; ctx.textAlign = 'right';
+    for (let cm = 0; cm <= 90; cm++) {
+      const ty = y + cm * PXCM;
+      const len = (cm % 10 === 0) ? 13 : (cm % 5 === 0) ? 9.5 : 6;
+      ctx.beginPath(); ctx.moveTo(right, ty); ctx.lineTo(right - len, ty);
+      ctx.lineWidth = (cm % 10 === 0) ? 1.2 : 0.7;
+      ctx.stroke();
+      if (cm % 10 === 0) {
+        ctx.font = '8.5px Segoe UI';
+        ctx.fillText(String(cm), right - 16, Math.max(ty + 3, y + 8));
+      }
+    }
+    ctx.font = 'italic 8.5px Segoe UI';
+    ctx.fillText('cm', right - 16, y + RUL_H - 4);
+  }
+
+  function drawMass(mass, dragged) {
+    const cx = mass.cx, topY = mass.topY, r = mass.r, h = mass.h;
+    const bodyY = topY + HOOK_H;
+    ctx.beginPath(); ctx.arc(cx, topY + 3.5, 3.2, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#4a4f55'; ctx.lineWidth = 1.8; ctx.stroke();
+    ctx.fillStyle = '#4a4f55';
+    ctx.fillRect(cx - 1.2, topY + 6.2, 2.4, HOOK_H - 6);
+    if (dragged) { ctx.save(); ctx.shadowColor = 'rgba(40,90,160,0.8)'; ctx.shadowBlur = 12; }
+    const cols = mass.colors || ['#aab4be', '#6e7882'];
+    const g = ctx.createLinearGradient(cx - r, 0, cx + r, 0);
+    g.addColorStop(0, cols[1]); g.addColorStop(0.32, cols[0]); g.addColorStop(1, cols[1]);
+    ctx.fillStyle = g;
+    rr(cx - r, bodyY, 2 * r, h, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1; ctx.stroke();
+    if (dragged) ctx.restore();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    rr(cx - r + 1.5, bodyY + 1, 2 * r - 3, 4, 2); ctx.fill();
+    ctx.save();
+    ctx.fillStyle = '#fff';
+    ctx.font = mass.colors ? 'bold 14px Segoe UI'
+      : 'bold ' + clamp(Math.round(r * 0.62), 8, 11) + 'px Segoe UI';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 2;
+    ctx.fillText(mass.label, cx, bodyY + h / 2 + (mass.colors ? 5 : 3.5));
+    ctx.restore();
+  }
+
+  function drawSnapHighlight() {
+    if (!(drag && drag.type === 'mass')) return;
+    const mass = masses[drag.i];
+    if (mass.attached >= 0) return;
+    const si = drag.snap;
+    if (si == null || si < 0) return;
+    const s = springs[si];
+    ctx.save();
+    ctx.setLineDash([4, 3]); ctx.strokeStyle = '#efa020'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, springEndY(s) - 1, 13, 0, 2 * Math.PI); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPanels() {
+    for (const p of [P1]) {
+      rr(p.x, p.y, p.w, p.h, 8);
+      ctx.fillStyle = 'rgba(255,255,255,0.93)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1; ctx.stroke();
+    }
+    for (const row of ROWS) {
+      const bx = 464, by = row.y - 7;
+      rr(bx, by, 14, 14, 3);
+      ctx.fillStyle = checks[row.key] ? '#3a78c2' : '#fff'; ctx.fill();
+      ctx.strokeStyle = checks[row.key] ? '#2c5f9e' : '#98a2ac'; ctx.lineWidth = 1.2; ctx.stroke();
+      if (checks[row.key]) {
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(bx + 3, by + 7.5); ctx.lineTo(bx + 6, by + 10.5); ctx.lineTo(bx + 11, by + 3.5);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#2c3540'; ctx.font = '11.5px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillText(row.label, 486, row.y + 4);
+      ctx.save();
+      ctx.setLineDash([6, 4]); ctx.strokeStyle = row.color; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(648, row.y); ctx.lineTo(682, row.y); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawZoomControl() {
+    // Panel
+    rr(ZC.x, ZC.y, ZC.w, ZC.h, 8);
+    ctx.fillStyle = 'rgba(255,255,255,0.93)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // "Zoom:" label
+    ctx.fillStyle = '#2c3540'; ctx.font = '11.5px Segoe UI'; ctx.textAlign = 'left';
+    ctx.fillText('Zoom:', ZC.x + 8, ZSL.y + 4);
+
+    // Slider track (background)
+    ctx.fillStyle = '#d0d7e0';
+    rr(ZSL.x, ZSL.y - 3, ZSL.w, 6, 3); ctx.fill();
+
+    // Slider track (filled)
+    const frac = (zoom - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN);
+    if (frac > 0) {
+      ctx.fillStyle = '#3a78c2';
+      rr(ZSL.x, ZSL.y - 3, ZSL.w * frac, 6, 3); ctx.fill();
+    }
+
+    // Slider thumb
+    const thumbX = ZSL.x + ZSL.w * frac;
+    ctx.beginPath(); ctx.arc(thumbX, ZSL.y, ZOOM_THUMB_R, 0, 2 * Math.PI);
+    ctx.fillStyle = '#3a78c2'; ctx.fill();
+    ctx.strokeStyle = '#2c5f9e'; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // Zoom value label
+    ctx.fillStyle = '#2c3540'; ctx.font = 'bold 11px Segoe UI'; ctx.textAlign = 'left';
+    ctx.fillText(zoom.toFixed(1) + '×', ZSL.x + ZSL.w + 6, ZSL.y + 4);
+
+    // Reset View button (orange when view is not default, grey otherwise)
+    rr(ZRESET.x, ZRESET.y, ZRESET.w, ZRESET.h, 5);
+    const viewChanged = zoom !== 1 || panX !== 0 || panY !== 0;
+    ctx.fillStyle = viewChanged ? '#e8762d' : '#b0b8c4'; ctx.fill();
+    ctx.strokeStyle = viewChanged ? '#bf5a18' : '#8a9aaa'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Segoe UI'; ctx.textAlign = 'center';
+    ctx.fillText('Reset View', ZRESET.x + ZRESET.w / 2, ZRESET.y + ZRESET.h / 2 + 3.5);
+  }
+
+  function drawTimeControls() {
+    ctx.beginPath(); ctx.arc(PAUSE.x, PAUSE.y, PAUSE.r, 0, 2 * Math.PI);
+    ctx.fillStyle = '#3a78c2'; ctx.fill();
+    ctx.strokeStyle = '#2c5f9e'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#fff';
+    if (paused) {
+      ctx.beginPath();
+      ctx.moveTo(PAUSE.x - 3.5, PAUSE.y - 6);
+      ctx.lineTo(PAUSE.x + 6.5, PAUSE.y);
+      ctx.lineTo(PAUSE.x - 3.5, PAUSE.y + 6);
+      ctx.closePath(); ctx.fill();
+    } else {
+      ctx.fillRect(PAUSE.x - 5, PAUSE.y - 6, 3.4, 12);
+      ctx.fillRect(PAUSE.x + 1.6, PAUSE.y - 6, 3.4, 12);
+    }
+  }
+
+  function drawReset() {
+    ctx.beginPath(); ctx.arc(RESET.x, RESET.y, RESET.r, 0, 2 * Math.PI);
+    ctx.fillStyle = '#e8762d'; ctx.fill();
+    ctx.strokeStyle = '#bf5a18'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Segoe UI'; ctx.textAlign = 'center';
+    ctx.fillText('↺', RESET.x, RESET.y + 6);
+  }
+
+  function draw() {
+    // Clear canvas (in unzoomed design space)
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, W, H);
+
+    // Zoomable scene — physics content scrolls/zooms
+    ctx.save();
+    ctx.setTransform(
+      scale * dpr * zoom, 0, 0, scale * dpr * zoom,
+      -panX * scale * dpr, -panY * scale * dpr
+    );
+    drawBarAndShelf();
+    drawRefLines();
+    drawSpring(springs[0]);
+    drawRuler();
+    for (const i of massDrawOrder()) {
+      drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
+    }
+    drawSnapHighlight();
+    ctx.restore();
+
+    // Fixed UI overlay — always at same canvas position regardless of zoom
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    drawPanels();
+    drawZoomControl();
+    drawTimeControls();
+    drawReset();
+  }
+
+  // ── Main loop ───────────────────────────────────────────────────────────
+  let lastTs = null, acc = 0;
+  function frame(ts) {
+    if (lastTs == null) lastTs = ts;
+    const dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+    if (!paused) {
+      acc += dt;
+      if (acc > 0.25) acc = 0.25;
+      while (acc >= DT) { step(DT); acc -= DT; }
+    }
+    sync();
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  // ── Capture hooks ───────────────────────────────────────────────────────
+  window.__cap = {
+    attach(displaceCm) {
+      const s = springs[0], m = masses[0];
+      s.massIdx = 0; m.attached = 0;
+      const eq = m.m * G / s.k;
+      s.ext = eq + (displaceCm || 0) / 100;
+      s.v = 0; m.vy = 0; hintDone = true;
+      sync();
+    },
+    settle() { this.attach(0); springs[0].v = 0; },
+    ruler(rx, ry) { ruler.x = rx; ruler.y = ry; },
+    checks(u, r) { checks.unstretched = !!u; checks.resting = !!r; },
+    unstretchedY() { return ANCHOR_Y + L0 * PXCM; },
+    PXCM, ANCHOR_Y, L0,
+    pause(p) { paused = !!p; },
+    setState(t) {
+      const s = springs[0], m = masses[0];
+      if (s.massIdx < 0) { s.massIdx = 0; m.attached = 0; hintDone = true; }
+      paused = true;
+      const eq = m.m * G / s.k;
+      const w0 = Math.sqrt(s.k / m.m);
+      const alpha = DAMP / 2;
+      const wd = Math.sqrt(w0 * w0 - alpha * alpha);
+      const decay = Math.exp(-alpha * t);
+      s.ext = eq * (1 - decay * (Math.cos(wd * t) + (alpha / wd) * Math.sin(wd * t)));
+      s.v   = eq * w0 * w0 / wd * decay * Math.sin(wd * t);
+      m.vy = 0;
+      sync(); draw();
+    },
+    period() {
+      const s = springs[0], m = masses[0];
+      const w0 = Math.sqrt(s.k / m.m);
+      const alpha = DAMP / 2;
+      return 2 * Math.PI / Math.sqrt(w0 * w0 - alpha * alpha);
+    },
+  };
+
+  resetAll();
+  fit();
+  requestAnimationFrame(frame);
+})();
+</script>
+<script>
+// EigenNode auto-height v2.5
+(function() {
+  var BUFFER = 4;
+  var H_SCROLLBAR = 18;
+  var measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    var kids = b.children;
+    for (var ki = 0; ki < kids.length; ki++) {
+      if ((window.getComputedStyle(kids[ki]).position || '') === 'absolute') {
+        var r = kids[ki].getBoundingClientRect();
+        if (r.height > 0) {
+          var bot = Math.ceil(r.bottom + (window.pageYOffset || 0));
+          if (bot > content) content = bot;
+        }
+      }
+    }
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var h = measure();
+    if (h > 0 && Math.abs(h - last) >= 2) {
+      last = h;
+      window.parent.postMessage({ type: 'resize', height: h }, '*');
+    }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+})();
+</script>
+</body>
+</html>
