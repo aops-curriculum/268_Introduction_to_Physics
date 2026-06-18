@@ -58,6 +58,14 @@
     const ctx = canvas.getContext('2d');
     const W = 548, H = 288;
 
+    // HiDPI fix: match canvas internal resolution to physical pixels
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(493.2 * dpr);
+    canvas.height = Math.round(259.2 * dpr);
+    canvas.style.width  = '493.2px';
+    canvas.style.height = '259.2px';
+    ctx.scale(canvas.width / W, canvas.height / H);
+
     // ── Layout / geometry ────────────────────────────────────
     const S = 120;                       // pixels per meter
     const PX = 274, PY = 166;            // pivot (plank bottom center)

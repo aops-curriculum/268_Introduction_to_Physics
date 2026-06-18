@@ -48,6 +48,14 @@
     const ctx = canvas.getContext('2d');
     const W = 548, H = 400;
 
+    // HiDPI fix: match canvas internal resolution to physical pixels
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(740 * dpr);
+    canvas.height = Math.round(540 * dpr);
+    canvas.style.width  = '740px';
+    canvas.style.height = '540px';
+    ctx.scale(canvas.width / W, canvas.height / H);
+
     // ── Geometry constants ───────────────────────────────────────
     const S = 120;                   // px per metre
     const PX = 274, PY = 170;        // pivot world position
