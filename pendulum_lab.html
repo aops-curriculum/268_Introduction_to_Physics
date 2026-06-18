@@ -160,12 +160,18 @@
     'use strict';
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
-    const W = 590, H = 500;
+    const NOPANEL = ['0', 'false', 'no'].includes((new URLSearchParams(location.search).get('panel') || '').toLowerCase());
+    const W = NOPANEL ? 800 : 590, H = 500;
+    const SCALE = W / 590;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.scale(dpr, dpr);
 
     // ── Layout constants ─────────────────────────────────────
-    const PIV = { x: 300, y: 70 };     // pivot point
-    const PX_PER_M = 340;              // 1.00 m of string = 340 px
-    const PROT_R = 140;                // protractor arc radius
+    const PIV = { x: Math.round(300 * SCALE), y: 70 };
+    const PX_PER_M = Math.round(340 * SCALE);
+    const PROT_R = Math.round(140 * SCALE);
 
     // ── Physics constants ────────────────────────────────────
     const H_SUB  = 1 / 240;            // RK4 substep (s of sim time)
@@ -215,9 +221,11 @@
     const arcRaw = Q.get('arc');            // static degree protractor (number = radius, px)
     const STATIC_PROT = qflag('protractor') || (arcRaw !== null && arcRaw !== '');
     const PROT_STATIC_R = (arcRaw !== null && arcRaw !== '' && !isNaN(parseFloat(arcRaw)))
-      ? Math.min(240, Math.max(60, parseFloat(arcRaw))) : 140;
+      ? Math.min(240, Math.max(60, parseFloat(arcRaw))) : Math.round(140 * SCALE);
     const NOSLOW = qflag('noslow');         // hide the slow-motion / normal speed radios
-    const SWFIXED = qflag('swfixed');       // stopwatch always on, no checkbox
+    const SWFIXED  = qflag('swfixed');       // stopwatch always on, no checkbox
+    const NOSTOP   = qflag('nostop');        // ?nostop=1 → hide "Stop bob" button
+    const NOPLAYER = qflag('noplayer');      // ?noplayer=1 → hide pause / step / speed controls
 
     // ── State ────────────────────────────────────────────────
     let S;                 // mutable sim state
@@ -270,6 +278,7 @@
       const swLab = cbStopwatch.closest('label');
       if (swLab) swLab.style.display = 'none';
     }
+    if (NOPANEL) document.getElementById('panel').style.display = 'none';
 
     // ── Panel events ─────────────────────────────────────────
     function setLength(v) {
@@ -485,7 +494,7 @@
     // space over the degree ticks — `?marks=1`. ampDeg tracks the turning points.
     function drawMarks() {
       if (ampDeg < 0.2) return;
-      const rOuter = STATIC_PROT ? PROT_STATIC_R : 140;
+      const rOuter = STATIC_PROT ? PROT_STATIC_R : PROT_R;
       const rInner = rOuter - 24;
       ctx.save();
       ctx.strokeStyle = '#1f4fd6'; ctx.lineWidth = 3.4; ctx.lineCap = 'round';
@@ -613,60 +622,64 @@
       ctx.save();
       ctx.textBaseline = 'middle';
       // stop-bob button
-      const sb = CL.stop;
-      const sbHover = hoverKind === 'btnStop';
-      roundRect(sb.x, sb.y, sb.w, sb.h, 6);
-      ctx.fillStyle = sbHover ? '#fdeaea' : '#fbf2f2'; ctx.fill();
-      ctx.strokeStyle = '#c98787'; ctx.lineWidth = 1.1; ctx.stroke();
-      ctx.fillStyle = '#a23b3b';
-      ctx.fillRect(sb.x + 10, sb.y + 9, 9, 9);
-      ctx.font = '600 11px Segoe UI'; ctx.textAlign = 'left';
-      ctx.fillStyle = '#7c2d2d';
-      ctx.fillText('Stop bob', sb.x + 25, sb.y + sb.h / 2 + 0.5);
-      // speed radios
-      const radio = (r, on, label) => {
-        ctx.beginPath(); ctx.arc(r.cx, r.cy, r.r, 0, Math.PI * 2);
-        ctx.fillStyle = '#fff'; ctx.fill();
-        ctx.strokeStyle = '#5a7187'; ctx.lineWidth = 1.2; ctx.stroke();
-        if (on) {
-          ctx.beginPath(); ctx.arc(r.cx, r.cy, r.r - 3.2, 0, Math.PI * 2);
-          ctx.fillStyle = '#3a78b5'; ctx.fill();
+      if (!NOSTOP) {
+        const sb = CL.stop;
+        const sbHover = hoverKind === 'btnStop';
+        roundRect(sb.x, sb.y, sb.w, sb.h, 6);
+        ctx.fillStyle = sbHover ? '#fdeaea' : '#fbf2f2'; ctx.fill();
+        ctx.strokeStyle = '#c98787'; ctx.lineWidth = 1.1; ctx.stroke();
+        ctx.fillStyle = '#a23b3b';
+        ctx.fillRect(sb.x + 10, sb.y + 9, 9, 9);
+        ctx.font = '600 11px Segoe UI'; ctx.textAlign = 'left';
+        ctx.fillStyle = '#7c2d2d';
+        ctx.fillText('Stop bob', sb.x + 25, sb.y + sb.h / 2 + 0.5);
+      }
+      if (!NOPLAYER) {
+        // speed radios
+        const radio = (r, on, label) => {
+          ctx.beginPath(); ctx.arc(r.cx, r.cy, r.r, 0, Math.PI * 2);
+          ctx.fillStyle = '#fff'; ctx.fill();
+          ctx.strokeStyle = '#5a7187'; ctx.lineWidth = 1.2; ctx.stroke();
+          if (on) {
+            ctx.beginPath(); ctx.arc(r.cx, r.cy, r.r - 3.2, 0, Math.PI * 2);
+            ctx.fillStyle = '#3a78b5'; ctx.fill();
+          }
+          ctx.fillStyle = '#46586a'; ctx.font = '11px Segoe UI'; ctx.textAlign = 'left';
+          ctx.fillText(label, r.cx + r.r + 4, r.cy + 0.5);
+        };
+        if (!NOSLOW) {
+          radio(CL.rNorm, !S.slow, 'Normal');
+          radio(CL.rSlow, S.slow, 'Slow motion');
         }
-        ctx.fillStyle = '#46586a'; ctx.font = '11px Segoe UI'; ctx.textAlign = 'left';
-        ctx.fillText(label, r.cx + r.r + 4, r.cy + 0.5);
-      };
-      if (!NOSLOW) {
-        radio(CL.rNorm, !S.slow, 'Normal');
-        radio(CL.rSlow, S.slow, 'Slow motion');
-      }
-      // pause / play
-      const pb = CL.pause;
-      ctx.beginPath(); ctx.arc(pb.cx, pb.cy, pb.r, 0, Math.PI * 2);
-      ctx.fillStyle = hoverKind === 'btnPause' ? '#dcebf8' : '#e9f2fa'; ctx.fill();
-      ctx.strokeStyle = '#3a78b5'; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.fillStyle = '#1a4a7a';
-      if (S.paused) {        // play triangle
+        // pause / play
+        const pb = CL.pause;
+        ctx.beginPath(); ctx.arc(pb.cx, pb.cy, pb.r, 0, Math.PI * 2);
+        ctx.fillStyle = hoverKind === 'btnPause' ? '#dcebf8' : '#e9f2fa'; ctx.fill();
+        ctx.strokeStyle = '#3a78b5'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = '#1a4a7a';
+        if (S.paused) {        // play triangle
+          ctx.beginPath();
+          ctx.moveTo(pb.cx - 4, pb.cy - 6.5);
+          ctx.lineTo(pb.cx + 7, pb.cy);
+          ctx.lineTo(pb.cx - 4, pb.cy + 6.5);
+          ctx.closePath(); ctx.fill();
+        } else {               // pause bars
+          ctx.fillRect(pb.cx - 5.5, pb.cy - 6, 4, 12);
+          ctx.fillRect(pb.cx + 1.5, pb.cy - 6, 4, 12);
+        }
+        // step
+        const st = CL.step;
+        ctx.beginPath(); ctx.arc(st.cx, st.cy, st.r, 0, Math.PI * 2);
+        ctx.fillStyle = hoverKind === 'btnStep' ? '#dcebf8' : '#eef4fa'; ctx.fill();
+        ctx.strokeStyle = '#6e94b5'; ctx.lineWidth = 1.2; ctx.stroke();
+        ctx.fillStyle = '#1a4a7a';
         ctx.beginPath();
-        ctx.moveTo(pb.cx - 4, pb.cy - 6.5);
-        ctx.lineTo(pb.cx + 7, pb.cy);
-        ctx.lineTo(pb.cx - 4, pb.cy + 6.5);
+        ctx.moveTo(st.cx - 5, st.cy - 4.5);
+        ctx.lineTo(st.cx + 1.5, st.cy);
+        ctx.lineTo(st.cx - 5, st.cy + 4.5);
         ctx.closePath(); ctx.fill();
-      } else {               // pause bars
-        ctx.fillRect(pb.cx - 5.5, pb.cy - 6, 4, 12);
-        ctx.fillRect(pb.cx + 1.5, pb.cy - 6, 4, 12);
+        ctx.fillRect(st.cx + 3, st.cy - 4.5, 2, 9);
       }
-      // step
-      const st = CL.step;
-      ctx.beginPath(); ctx.arc(st.cx, st.cy, st.r, 0, Math.PI * 2);
-      ctx.fillStyle = hoverKind === 'btnStep' ? '#dcebf8' : '#eef4fa'; ctx.fill();
-      ctx.strokeStyle = '#6e94b5'; ctx.lineWidth = 1.2; ctx.stroke();
-      ctx.fillStyle = '#1a4a7a';
-      ctx.beginPath();
-      ctx.moveTo(st.cx - 5, st.cy - 4.5);
-      ctx.lineTo(st.cx + 1.5, st.cy);
-      ctx.lineTo(st.cx - 5, st.cy + 4.5);
-      ctx.closePath(); ctx.fill();
-      ctx.fillRect(st.cx + 3, st.cy - 4.5, 2, 9);
       ctx.restore();
     }
 
@@ -717,14 +730,16 @@
     function hitTest(mx, my) {
       // playback cluster (topmost)
       if (!CLEAN) {
-        if (inRect(mx, my, CL.stop.x, CL.stop.y, CL.stop.w, CL.stop.h)) return 'btnStop';
-        if (inCircle(mx, my, CL.pause)) return 'btnPause';
-        if (inCircle(mx, my, CL.step)) return 'btnStep';
-        if (!NOSLOW) {
-          if (Math.hypot(mx - CL.rNorm.cx, my - CL.rNorm.cy) < 9 ||
-              (mx > CL.rNorm.cx && mx < CL.rNorm.cx + 56 && Math.abs(my - CL.rNorm.cy) < 9)) return 'btnNorm';
-          if (Math.hypot(mx - CL.rSlow.cx, my - CL.rSlow.cy) < 9 ||
-              (mx > CL.rSlow.cx && mx < CL.rSlow.cx + 88 && Math.abs(my - CL.rSlow.cy) < 9)) return 'btnSlow';
+        if (!NOSTOP && inRect(mx, my, CL.stop.x, CL.stop.y, CL.stop.w, CL.stop.h)) return 'btnStop';
+        if (!NOPLAYER) {
+          if (inCircle(mx, my, CL.pause)) return 'btnPause';
+          if (inCircle(mx, my, CL.step)) return 'btnStep';
+          if (!NOSLOW) {
+            if (Math.hypot(mx - CL.rNorm.cx, my - CL.rNorm.cy) < 9 ||
+                (mx > CL.rNorm.cx && mx < CL.rNorm.cx + 56 && Math.abs(my - CL.rNorm.cy) < 9)) return 'btnNorm';
+            if (Math.hypot(mx - CL.rSlow.cx, my - CL.rSlow.cy) < 9 ||
+                (mx > CL.rSlow.cx && mx < CL.rSlow.cx + 88 && Math.abs(my - CL.rSlow.cy) < 9)) return 'btnSlow';
+          }
         }
       }
       // stopwatch buttons, then card

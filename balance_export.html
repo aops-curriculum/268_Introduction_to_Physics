@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Balance Export</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { width: 740px; height: 540px; overflow: hidden; background: #f5f5f5; }
+    canvas { display: block; width: 740px; height: 540px; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+  (() => {
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const W = 548, H = 400;
+
+    // HiDPI fix
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(740 * dpr);
+    canvas.height = Math.round(540 * dpr);
+    canvas.style.width  = '740px';
+    canvas.style.height = '540px';
+    ctx.scale(canvas.width / W, canvas.height / H);
+
+    // ── Geometry constants ───────────────────────────────────────
+    const S = 120;
+    const PX = 274, PY = 170;
+    const HALF = 2.2 * S;
+    const PT = 29;
+    const BO = 38;
+    const GROUND = 295;
+    const SB = 340;
+    const THMAX = 12 * Math.PI / 180;
+    const SNAP = 0.25, XMAX = 2.0;
+    const KIT = { x: 200, y: 6, w: 200, h: 78 };
+    const BTN = { x: 199, y: 368, w: 150, h: 22 };
+    const PLAY_AGAIN_BTN = { x: 288, y: 328, w: 130, h: 30 };
+    const BRICKH = 18;
+
+    // ── Level data ───────────────────────────────────────────────
+    const LEVELS = [
+      { fx:[{m:5,p:1}],                              ck:[{m:5}]              },
+      { fx:[{m:4,p:2}],                              ck:[{m:8}]              },
+      { fx:[{m:6,p:1}],                              ck:[{m:3}]              },
+      { fx:[{m:10,p:1.5}],                           ck:[{m:3},{m:6}]        },
+      { fx:[{m:6,p:2}],                              ck:[{m:20},{m:3}]       },
+      { fx:[{m:8,p:1},{m:3,p:2}],                    ck:[{m:4},{m:10}]       },
+      { fx:[{m:2,p:.5},{m:4,p:1},{m:6,p:2}],         ck:[{m:4},{m:8}]        },
+      { fx:[{m:4,p:2}],                              ck:[{m:15},{m:7}]       },
+      { fx:[{m:3,p:1},{m:5,p:1.5},{m:4,p:2}],        ck:[{m:2},{m:6},{m:8}]  },
+      { fx:[{m:8,p:2},{m:3,p:1},{m:4,p:1.5}],        ck:[{m:4},{m:6},{m:3}]  },
+    ];
+
+    const WIN_MSGS = [
+      'Great balance!','Well done!','Excellent!','Perfect!',
+      'Brilliant!','Nice work!','Spot on!','Outstanding!',
+      'Fantastic!','You did it!'
+    ];
+
+    // ── State ────────────────────────────────────────────────────
+    let lvl = 0;
+    let state = 'won';
+    let supUp = false;
+    let fixB = [];
+    let cldB = [];
+    let theta = 0, omega = 0;
+    let drag = null;
+    let snap = null;
+    let kitR = [];
+
+    // ── Geometry helpers ─────────────────────────────────────────
+    const p2 = (mx, my) => {
+      const c = Math.cos(theta), s = Math.sin(theta), dx = mx - PX, dy = my - PY;
+      return [dx * c + dy * s, -dx * s + dy * c];
+    };
+    function layout() {
+      const all = [
+        ...fixB.map(b => ({...b, fx:true})),
+        ...cldB.filter(b => b.placed && !(drag && b.id === drag.id)).map(b => ({...b, fx:false})),
+      ];
+      const hh = {};
+      return all.map(b => {
+        const k = b.pos.toFixed(2), bh = BRICKH;
+        const base = hh[k] || 0; hh[k] = base + bh;
+        return {b, base, bh};
+      });
+    }
+    const inR = (mx, my, r) => mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+    function rr(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+      ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r);
+      ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+    }
+
+    // ── Brick art ────────────────────────────────────────────────
+    function drawBrick(m, isF) {
+      const fill = isF ? '#c47c3a' : '#9aa9b8';
+      const str  = isF ? '#8a5425' : '#65788c';
+      ctx.fillStyle = fill; ctx.strokeStyle = str; ctx.lineWidth = 1.2;
+      rr(-23, -BRICKH, 46, BRICKH - 1, 2); ctx.fill(); ctx.stroke();
+    }
+    function drawBrickLabelled(m, isF) {
+      drawBrick(m, isF);
+      ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,255,255,0.93)';
+      ctx.fillText(m + ' kg', 0, -BRICKH / 2);
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    // ── Scene drawing ────────────────────────────────────────────
+    function drawBg() {
+      const sky = ctx.createLinearGradient(0,0,0,GROUND);
+      sky.addColorStop(0,'#cfe9f9'); sky.addColorStop(1,'#eef8fd');
+      ctx.fillStyle = sky; ctx.fillRect(0,0,W,GROUND);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      for (const [cx,cy,sc] of [[80,30,1],[430,18,.8]]) {
+        ctx.beginPath();
+        ctx.ellipse(cx,cy,34*sc,13*sc,0,0,Math.PI*2);
+        ctx.ellipse(cx+24*sc,cy+4*sc,24*sc,10*sc,0,0,Math.PI*2);
+        ctx.ellipse(cx-26*sc,cy+5*sc,20*sc,9*sc,0,0,Math.PI*2);
+        ctx.fill();
+      }
+      const g = ctx.createLinearGradient(0,GROUND,0,SB);
+      g.addColorStop(0,'#76b96b'); g.addColorStop(1,'#5aa251');
+      ctx.fillStyle = g; ctx.fillRect(0,GROUND,W,SB-GROUND);
+      ctx.strokeStyle = '#4f9347'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0,GROUND); ctx.lineTo(W,GROUND); ctx.stroke();
+      // UI zone
+      ctx.fillStyle = '#e8edf2'; ctx.fillRect(0,SB,W,H-SB);
+      ctx.strokeStyle = '#c0c8d0'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0,SB); ctx.lineTo(W,SB); ctx.stroke();
+    }
+
+    function drawSupports() {
+      if (!supUp) return;
+      const botY = PY + BO + PT;
+      const sw = 10;
+      for (const cx of [PX - HALF + 3, PX + HALF - 3]) {
+        ctx.fillStyle = '#8a7060'; ctx.strokeStyle = '#60504a'; ctx.lineWidth = 1;
+        rr(cx-sw/2, botY, sw, GROUND-botY, 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#7a6058';
+        rr(cx-sw, GROUND-5, sw*2, 5, 1); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#b09080';
+        rr(cx-sw/2-1, botY-3, sw+2, 4, 1); ctx.fill();
+      }
+    }
+
+    function drawFulcrum() {
+      ctx.beginPath();
+      ctx.moveTo(PX,PY); ctx.lineTo(PX-40,GROUND); ctx.lineTo(PX+40,GROUND);
+      ctx.closePath(); ctx.fillStyle = '#6e7a88'; ctx.fill();
+      ctx.strokeStyle = '#4d5763'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+
+    function drawPlank() {
+      const items = layout();
+      ctx.save(); ctx.translate(PX,PY); ctx.rotate(theta);
+      // V-support beams
+      ctx.strokeStyle = '#c8b87a'; ctx.lineWidth = 5; ctx.lineCap = 'butt';
+      for (const bx of [-0.1*S, 0.1*S]) {
+        ctx.beginPath(); ctx.moveTo(bx,BO); ctx.lineTo(0,0); ctx.stroke();
+      }
+      // Board
+      ctx.fillStyle = '#f0e6c2'; ctx.strokeStyle = '#b1a06b'; ctx.lineWidth = 1.4;
+      rr(-HALF, BO, 2*HALF, PT, 3); ctx.fill(); ctx.stroke();
+      // Ruler ticks
+      ctx.strokeStyle = '#7a6a3a'; ctx.lineWidth = 1;
+      for (let i = -8; i <= 8; i++) {
+        const x = i * SNAP * S;
+        ctx.beginPath(); ctx.moveTo(x, BO+1); ctx.lineTo(x, BO + (i%4===0?8:5)); ctx.stroke();
+      }
+      ctx.fillStyle = '#5a4c20'; ctx.font = '8px Segoe UI'; ctx.textAlign = 'center';
+      for (let i = 1; i <= 8; i++) {
+        const v = i * SNAP;
+        ctx.fillText(String(v), -v*S, BO+17); ctx.fillText(String(v), v*S, BO+17);
+      }
+      ctx.font = 'italic 8.5px Segoe UI';
+      ctx.fillText('meters', -HALF/2, BO+PT-1.5); ctx.fillText('meters', HALF/2, BO+PT-1.5);
+      // Bricks
+      for (const it of items) {
+        ctx.save(); ctx.translate(it.b.pos*S, BO - it.base);
+        drawBrickLabelled(it.b.m, it.b.fx); ctx.restore();
+      }
+      ctx.restore();
+      // Pivot bolt
+      ctx.beginPath(); ctx.arc(PX,PY,5,0,Math.PI*2); ctx.fillStyle = '#4d5763'; ctx.fill();
+    }
+
+    function drawKit() {
+      kitR = [];
+      rr(KIT.x, KIT.y, KIT.w, KIT.h, 9);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.fillStyle = '#667'; ctx.font = '9px Segoe UI'; ctx.textAlign = 'center';
+      ctx.fillText('Available Bricks', KIT.x + KIT.w/2, KIT.y + 13);
+
+      const avail = cldB.filter(b => !b.placed && !(drag && drag.id === b.id));
+      if (!avail.length) {
+        ctx.fillStyle = '#aaa'; ctx.font = '10px Segoe UI'; ctx.textAlign = 'center';
+        ctx.fillText('(all placed)', KIT.x + KIT.w/2, KIT.y + KIT.h/2 + 6);
+        return;
+      }
+      const n = avail.length, sp = Math.min(60, (KIT.w-20)/n);
+      const sx = KIT.x + KIT.w/2 - sp*(n-1)/2;
+      avail.forEach((b, i) => {
+        const cx = sx + i*sp, by = KIT.y + 62;
+        ctx.save(); ctx.translate(cx, by);
+        drawBrick(b.m, false);
+        ctx.fillStyle = '#556'; ctx.font = '9px Segoe UI'; ctx.textAlign = 'center';
+        ctx.fillText(b.m + ' kg', 0, 12);
+        ctx.restore();
+        kitR.push({ x:cx-25, y:by-BRICKH-5, w:50, h:BRICKH+18, id:b.id });
+      });
+    }
+
+    function drawLvlCounter() {
+      rr(5, 6, 148, 60, 8);
+      ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.13)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = '#334'; ctx.font = 'bold 14px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillText('Level ' + (lvl+1) + ' / 10', 14, 27);
+      for (let i = 0; i < 10; i++) {
+        ctx.fillStyle = i <= lvl ? '#3a6aaa' : '#ccc';
+        ctx.beginPath(); ctx.arc(14 + i*12, 47, 4, 0, Math.PI*2); ctx.fill();
+      }
+    }
+
+    function drawStatus() {
+      ctx.textAlign = 'center';
+      if (state === 'won') {
+        ctx.fillStyle = '#1a6e2e'; ctx.font = 'bold 14px Segoe UI';
+        ctx.fillText(WIN_MSGS[lvl] || 'Great!', W/2, SB + 16);
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      drawBg();
+      drawFulcrum();
+      drawSupports();
+      drawPlank();
+      drawKit();
+      drawLvlCounter();
+      drawStatus();
+    }
+
+    // ── Export API ───────────────────────────────────────────────
+    window.renderLevel = function(lvlIdx, cloudPositions) {
+      lvl = lvlIdx;
+      state = 'won';
+      supUp = false;
+      theta = 0;
+      omega = 0;
+      drag = null;
+      snap = null;
+
+      fixB = LEVELS[lvlIdx].fx.map((b, i) => ({id:'f'+i, m:b.m, pos:b.p}));
+      cldB = LEVELS[lvlIdx].ck.map((b, i) => ({
+        id: 'c'+i,
+        m: b.m,
+        placed: true,
+        pos: cloudPositions[i]
+      }));
+
+      draw();
+      return canvas.toDataURL('image/png');
+    };
+
+    // Initial draw
+    draw();
+  })();
+  </script>
+</body>
+</html>

@@ -76,6 +76,10 @@
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     const W = 800, H = 230;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.scale(dpr, dpr);
 
     // ── Geometry (px) ───────────────────────────────────────
     const WALL_X    = 56;     // spring anchor (wall face)
