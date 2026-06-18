@@ -60,12 +60,20 @@
   </style>
 </head>
 <body>
-  <canvas id="c" width="700" height="500"></canvas>
+  <canvas id="c"></canvas>
   <script>
   (() => {
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     const W = 700, H = 500;
+
+    // HiDPI fix: match canvas internal resolution to physical pixels
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.scale(dpr, dpr);
 
     // ── Scene geometry ───────────────────────────────────────
     const GROUND_Y = 150;
