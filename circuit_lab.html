@@ -104,6 +104,12 @@
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     const W = 800, H = 455, TRAY_W = 96;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.scale(dpr, dpr);
     const SNAP = 18;
     const R_WIRE = 1e-6;
     const R_SWITCH = 1e-6, R_AMMETER = 1e-6;
@@ -153,7 +159,8 @@
         'position:absolute;display:flex;align-items:center;gap:2px;' +
         'background:rgba(255,255,255,0.92);border-radius:10px;padding:4px 5px 4px 5px;' +
         'box-shadow:0 1px 4px rgba(0,0,0,0.22);z-index:4;' +
-        'font-size:11px;color:#334455;font-family:Segoe UI,system-ui,sans-serif;';
+        'font-size:11px;color:#334455;font-family:Segoe UI,system-ui,sans-serif;' +
+        'transform:scale(0.9);transform-origin:top center;';
       const sl = document.createElement('input');
       sl.type = 'range'; sl.min = 0; sl.max = 120; sl.step = 0.1;
       sl.value = p.volts;
@@ -161,9 +168,20 @@
       const lb = document.createElement('span');
       lb.style.cssText = 'min-width:50px;font-weight:600;text-align:right;white-space:nowrap;';
       lb.innerHTML = batLabel(p.volts);
+      // pointer drag → snap to nearest 1.5 V; keyboard arrows → 0.1 V steps
+      let dragging = false;
+      sl.addEventListener('pointerdown',   () => { dragging = true;  });
+      sl.addEventListener('pointerup',     () => { dragging = false; });
+      sl.addEventListener('pointercancel', () => { dragging = false; });
       sl.addEventListener('input', () => {
-        p.volts = parseFloat(sl.value);
-        lb.innerHTML = batLabel(p.volts);
+        let v = parseFloat(sl.value);
+        if (dragging) {
+          v = Math.round(v / 1.5) * 1.5;
+          v = Math.max(0, Math.min(120, v));
+          sl.value = v;
+        }
+        p.volts = v;
+        lb.innerHTML = batLabel(v);
         markDirty();
       });
       // prevent slider clicks from starting a canvas drag
