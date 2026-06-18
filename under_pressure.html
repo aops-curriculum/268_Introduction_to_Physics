@@ -82,6 +82,9 @@
     // Fixed physics
     const RHO = 1000, G_ACC = 9.8;
 
+    // ── Zoom ─────────────────────────────────────────────────
+    const ZOOM_MIN = 1.0, ZOOM_MAX = 4.0, ZOOM_STEP = 0.5;
+
     // ── URL-parameter defaults ───────────────────────────────
     const Q = new URLSearchParams(location.search);
     const qnum = (k, def, lo, hi) => {
@@ -105,6 +108,30 @@
       state.gauge = { x: 570, y: 90 };
       state.rul   = { x: 96, y: GROUND_Y };
       state.flowPhase = 0;
+      state.zoom  = 1.0;
+      state.pan   = { x: 0, y: 0 };
+    }
+
+    // ── Coord helpers ─────────────────────────────────────────
+    const screenToWorld = (sx, sy) => [sx / state.zoom + state.pan.x, sy / state.zoom + state.pan.y];
+
+    function clampPan() {
+      const maxX = W * (1 - 1 / state.zoom);
+      const maxY = H * (1 - 1 / state.zoom);
+      state.pan.x = Math.max(0, Math.min(maxX, state.pan.x));
+      state.pan.y = Math.max(0, Math.min(maxY, state.pan.y));
+    }
+
+    function adjustZoom(delta) {
+      const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
+        Math.round((state.zoom + delta) * 10) / 10));
+      if (newZoom === state.zoom) return;
+      const cx = state.pan.x + W / (2 * state.zoom);
+      const cy = state.pan.y + H / (2 * state.zoom);
+      state.zoom = newZoom;
+      state.pan.x = cx - W / (2 * newZoom);
+      state.pan.y = cy - H / (2 * newZoom);
+      clampPan();
     }
 
     // ── Physics ──────────────────────────────────────────────
@@ -121,11 +148,37 @@
     const WATER_RGB = [110, 196, 232];
     const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
-    // ── Overlay button rects ─────────────────────────────────
-    const RULER_BTN = { x: 10, y: 10, w: 55, h: 22 };
-    const GRID_BTN  = { x: 10, y: 37, w: 55, h: 22 };
+    // ── Adaptive ruler / grid intervals ───────────────────────
+    // Nice intervals in meters, largest first
+    const NICE = [1.0, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005];
 
-    // Knob rest centers
+    function getRulerIntervals() {
+      const z = state.zoom;
+      let minor = NICE[0], label = NICE[0];
+      // Smallest nice interval that still gives ≥ 8 px on screen → minor ticks
+      for (const n of NICE) if (n * PXM * z >= 8)  minor = n;
+      // Smallest nice interval that still gives ≥ 40 px on screen → labeled ticks
+      for (const n of NICE) if (n * PXM * z >= 40) label = n;
+      if (label < minor) label = minor;
+      return { minor, label };
+    }
+
+    function getGridInterval() {
+      const z = state.zoom;
+      let step = NICE[0];
+      // Smallest nice interval that still gives ≥ 40 px on screen
+      for (const n of NICE) if (n * PXM * z >= 40) step = n;
+      return step;
+    }
+
+    // ── HUD rects (screen coords, never zoomed) ───────────────
+    const RULER_BTN      = { x: 10,  y: 10, w: 55, h: 22 };
+    const GRID_BTN       = { x: 10,  y: 37, w: 55, h: 22 };
+    const ZOOM_MINUS_BTN = { x: 71,  y: 10, w: 22, h: 22 };
+    const ZOOM_LABEL_R   = { x: 93,  y: 10, w: 38, h: 22 };
+    const ZOOM_PLUS_BTN  = { x: 131, y: 10, w: 22, h: 22 };
+
+    // Knob rest centers (world coords)
     const FILL_KNOB_CX  = SPOUT_X, FILL_KNOB_CY  = 47;
     const DRAIN_KNOB_CX = DRAIN_KNOB_X, DRAIN_KNOB_CY = 421;
     const KNOB_R = 8;
@@ -150,17 +203,14 @@
     }
 
     function drawFaucet() {
-      // horizontal supply pipe
       ctx.fillStyle = '#aeb8c0';
       ctx.fillRect(0, 62, SPOUT_X + 4, 16);
       ctx.fillStyle = 'rgba(255,255,255,0.45)';
       ctx.fillRect(0, 64, SPOUT_X + 4, 4);
-      // down-spout
       ctx.fillStyle = '#9fa9b2';
       ctx.fillRect(SPOUT_X - 13, 62, 26, 34);
       ctx.fillStyle = '#8d97a0';
       ctx.fillRect(SPOUT_X - 9, 96, 18, 6);
-      // valve knob — pulls up when active
       const fky = FILL_KNOB_CY - (state.fill ? 4 : 0);
       ctx.strokeStyle = '#76828c'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(FILL_KNOB_CX, 62); ctx.lineTo(FILL_KNOB_CX, fky + KNOB_R); ctx.stroke();
@@ -168,7 +218,6 @@
       ctx.fillStyle = state.fill ? '#3d6a8a' : '#5f7d99';
       ctx.fill();
       ctx.strokeStyle = '#46627c'; ctx.lineWidth = 1.5; ctx.stroke();
-      // pipe outline
       ctx.strokeStyle = '#76828c'; ctx.lineWidth = 1;
       ctx.strokeRect(0.5, 62.5, SPOUT_X + 12.5, 15);
     }
@@ -216,7 +265,6 @@
       ctx.fillRect(POOL.r, 434, DRAIN_PIPE_END - POOL.r, 4);
       ctx.strokeStyle = '#76828c'; ctx.lineWidth = 1;
       ctx.strokeRect(POOL.r + 0.5, 432.5, DRAIN_PIPE_END - POOL.r - 1, 17);
-      // valve knob — pulls down when active
       const dky = DRAIN_KNOB_CY + (state.drain ? 4 : 0);
       ctx.beginPath(); ctx.moveTo(DRAIN_KNOB_CX, 432); ctx.lineTo(DRAIN_KNOB_CX, dky - KNOB_R);
       ctx.strokeStyle = '#76828c'; ctx.lineWidth = 3; ctx.stroke();
@@ -224,7 +272,6 @@
       ctx.fillStyle = state.drain ? '#3d6a8a' : '#5f7d99';
       ctx.fill();
       ctx.strokeStyle = '#46627c'; ctx.lineWidth = 1.5; ctx.stroke();
-      // animated outflow while draining
       if (state.drain && state.water > 0.0005) {
         ctx.save();
         ctx.strokeStyle = rgba(WATER_RGB, 0.95); ctx.lineWidth = 8;
@@ -246,20 +293,26 @@
 
     function drawGrid() {
       if (!state.grid) return;
+      const step = getGridInterval();
+      const dp = step >= 0.1 ? 1 : 2;
+      const EPS = step * 0.01;
       ctx.font = 'bold 10px Segoe UI';
       ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-      for (let i = 0; i <= 6; i++) {
-        const y = GROUND_Y + i * 0.5 * PXM;
+      let depth = 0;
+      while (depth <= MAX_DEPTH + EPS) {
+        const y = GROUND_Y + depth * PXM;
+        const isWholeMeter = Math.abs(Math.round(depth) - depth) < EPS;
         ctx.strokeStyle = 'rgba(20,70,90,0.45)';
-        ctx.lineWidth = (i % 2 === 0) ? 1.6 : 0.8;
+        ctx.lineWidth = isWholeMeter ? 1.6 : 0.8;
         ctx.beginPath(); ctx.moveTo(POOL.l, y + 0.5); ctx.lineTo(POOL.r, y + 0.5); ctx.stroke();
         ctx.strokeStyle = 'rgba(20,70,90,0.7)'; ctx.lineWidth = 1.6;
         ctx.beginPath(); ctx.moveTo(POOL.l - WALL, y + 0.5); ctx.lineTo(POOL.l, y + 0.5); ctx.stroke();
-        const label = (i * 0.5).toFixed(1) + ' m';
+        const label = depth.toFixed(dp) + ' m';
         ctx.fillStyle = 'rgba(0,0,0,0.35)';
         ctx.fillText(label, POOL.l - WALL - 4 + 1, y + 1);
         ctx.fillStyle = '#fff7e0';
         ctx.fillText(label, POOL.l - WALL - 4, y);
+        depth = Math.round((depth + step) * 1e6) / 1e6;
       }
     }
 
@@ -277,17 +330,26 @@
       ctx.fillStyle = '#6b5a2a';
       ctx.font = 'bold 9px Segoe UI'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('m', rx + r.w / 2, ry - 9);
+
+      const { minor, label: labelStep } = getRulerIntervals();
+      const labelDp = labelStep >= 1 ? 0 : labelStep >= 0.1 ? 1 : 2;
+      const EPS = minor * 0.01;
+
       ctx.strokeStyle = '#5a4a22';
       ctx.textAlign = 'right'; ctx.font = '8.5px Segoe UI';
-      for (let i = 0; i <= 30; i++) {
-        const y = ry + i * 0.1 * PXM;
-        const len = (i % 10 === 0) ? 13 : (i % 5 === 0) ? 9 : 5;
-        ctx.lineWidth = (i % 5 === 0) ? 1.2 : 0.7;
+      let depth = 0;
+      while (depth <= MAX_DEPTH + EPS) {
+        const y = ry + depth * PXM;
+        const isLabel = Math.abs(Math.round(depth / labelStep) * labelStep - depth) < EPS;
+        ctx.lineWidth = isLabel ? 1.2 : 0.7;
+        const len = isLabel ? 13 : 5;
         ctx.beginPath(); ctx.moveTo(rx, y + 0.5); ctx.lineTo(rx + len, y + 0.5); ctx.stroke();
-        if (i % 5 === 0) {
+        if (isLabel) {
           ctx.fillStyle = '#5a4a22';
-          ctx.fillText(i === 0 ? '0' : (i / 10).toFixed(1), rx + r.w - 3, y + (i === 0 ? 4 : 0));
+          const text = depth < EPS ? '0' : depth.toFixed(labelDp);
+          ctx.fillText(text, rx + r.w - 3, y + (depth < EPS ? 4 : 0));
         }
+        depth = Math.round((depth + minor) * 1e6) / 1e6;
       }
     }
 
@@ -377,12 +439,27 @@
       }
       drawBtn(RULER_BTN, 'Ruler', state.ruler);
       drawBtn(GRID_BTN,  'Grid',  state.grid);
+      drawBtn(ZOOM_MINUS_BTN, '−', false);
+      drawBtn(ZOOM_PLUS_BTN,  '+', false);
+      // zoom level label (non-interactive)
+      roundRect(ZOOM_LABEL_R.x, ZOOM_LABEL_R.y, ZOOM_LABEL_R.w, ZOOM_LABEL_R.h, 5);
+      ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fill();
+      ctx.strokeStyle = '#b6c2cc'; ctx.lineWidth = 1;
+      roundRect(ZOOM_LABEL_R.x, ZOOM_LABEL_R.y, ZOOM_LABEL_R.w, ZOOM_LABEL_R.h, 5); ctx.stroke();
+      ctx.fillStyle = '#334455'; ctx.font = '11px Segoe UI';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(state.zoom.toFixed(1) + '×',
+        ZOOM_LABEL_R.x + ZOOM_LABEL_R.w / 2, ZOOM_LABEL_R.y + ZOOM_LABEL_R.h / 2);
     }
 
     function draw() {
       ctx.clearRect(0, 0, W, H);
+
+      // Scene — drawn under zoom/pan transform
+      ctx.save();
+      ctx.scale(state.zoom, state.zoom);
+      ctx.translate(-state.pan.x, -state.pan.y);
       drawSky();
-      drawHint();
       drawFaucet();
       drawGroundAndPool();
       drawWater();
@@ -392,6 +469,10 @@
       drawGrid();
       drawRuler();
       drawGauge();
+      ctx.restore();
+
+      // HUD — always in screen space
+      drawHint();
       drawOverlayButtons();
     }
 
@@ -417,13 +498,13 @@
       return [e.clientX - r.left, e.clientY - r.top];
     };
     const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-    const overGauge       = (x, y) => {
+    const overGauge       = (wx, wy) => {
       const g = state.gauge;
-      return Math.hypot(x - g.x, y - g.y) < 32 || inRect(x, y, gaugeTagRect());
+      return Math.hypot(wx - g.x, wy - g.y) < 32 || inRect(wx, wy, gaugeTagRect());
     };
-    const overRulerWidget = (x, y) => state.ruler && inRect(x, y, rulerRect());
-    const overFillKnob    = (x, y) => Math.hypot(x - FILL_KNOB_CX,  y - FILL_KNOB_CY)  < KNOB_R + 6;
-    const overDrainKnob   = (x, y) => Math.hypot(x - DRAIN_KNOB_CX, y - DRAIN_KNOB_CY) < KNOB_R + 6;
+    const overRulerWidget = (wx, wy) => state.ruler && inRect(wx, wy, rulerRect());
+    const overFillKnob    = (wx, wy) => Math.hypot(wx - FILL_KNOB_CX,  wy - FILL_KNOB_CY)  < KNOB_R + 6;
+    const overDrainKnob   = (wx, wy) => Math.hypot(wx - DRAIN_KNOB_CX, wy - DRAIN_KNOB_CY) < KNOB_R + 6;
 
     let drag = null;
 
@@ -437,42 +518,62 @@
 
     canvas.addEventListener('pointerdown', e => {
       e.preventDefault();
-      const [x, y] = cpos(e);
-      // Overlay button toggles (no capture needed — just a click)
-      if (inRect(x, y, RULER_BTN)) { state.ruler = !state.ruler; return; }
-      if (inRect(x, y, GRID_BTN))  { state.grid  = !state.grid;  return; }
-      // Spigot knobs — hold to run
-      if (overFillKnob(x, y)) {
+      const [sx, sy] = cpos(e);
+      const [wx, wy] = screenToWorld(sx, sy);
+
+      // HUD toggles — screen coords
+      if (inRect(sx, sy, RULER_BTN))      { state.ruler = !state.ruler; return; }
+      if (inRect(sx, sy, GRID_BTN))       { state.grid  = !state.grid;  return; }
+      if (inRect(sx, sy, ZOOM_MINUS_BTN)) { adjustZoom(-ZOOM_STEP); return; }
+      if (inRect(sx, sy, ZOOM_PLUS_BTN))  { adjustZoom(+ZOOM_STEP); return; }
+
+      // Spigot knobs — world coords, hold to run
+      if (overFillKnob(wx, wy)) {
         drag = { what: 'fill' }; state.fill = true;
         canvas.setPointerCapture(e.pointerId); return;
       }
-      if (overDrainKnob(x, y)) {
+      if (overDrainKnob(wx, wy)) {
         drag = { what: 'drain' }; state.drain = true;
         canvas.setPointerCapture(e.pointerId); return;
       }
-      // Gauge / ruler drag
-      if (overGauge(x, y)) {
-        drag = { what: 'gauge', dx: state.gauge.x - x, dy: state.gauge.y - y };
-      } else if (overRulerWidget(x, y)) {
-        drag = { what: 'ruler', dx: state.rul.x - x, dy: state.rul.y - y };
+
+      // Gauge / ruler drag — world coords
+      if (overGauge(wx, wy)) {
+        drag = { what: 'gauge', dx: state.gauge.x - wx, dy: state.gauge.y - wy };
+      } else if (overRulerWidget(wx, wy)) {
+        drag = { what: 'ruler', dx: state.rul.x - wx, dy: state.rul.y - wy };
+      } else if (state.zoom > 1) {
+        drag = { what: 'pan', lastX: sx, lastY: sy };
       }
       if (drag) canvas.setPointerCapture(e.pointerId);
     });
 
     canvas.addEventListener('pointermove', e => {
-      const [x, y] = cpos(e);
+      const [sx, sy] = cpos(e);
+      const [wx, wy] = screenToWorld(sx, sy);
+
       if (drag?.what === 'gauge') {
-        [state.gauge.x, state.gauge.y] = clampGauge(x + drag.dx, y + drag.dy);
+        [state.gauge.x, state.gauge.y] = clampGauge(wx + drag.dx, wy + drag.dy);
         canvas.style.cursor = 'grabbing';
       } else if (drag?.what === 'ruler') {
-        state.rul.x = Math.max(-10, Math.min(W - 40, x + drag.dx));
-        state.rul.y = Math.max(30, Math.min(H - 30, y + drag.dy));
+        state.rul.x = Math.max(-10, Math.min(W - 40, wx + drag.dx));
+        state.rul.y = Math.max(30, Math.min(H - 30, wy + drag.dy));
+        canvas.style.cursor = 'grabbing';
+      } else if (drag?.what === 'pan') {
+        const maxX = W * (1 - 1 / state.zoom);
+        const maxY = H * (1 - 1 / state.zoom);
+        state.pan.x = Math.max(0, Math.min(maxX, state.pan.x - (sx - drag.lastX) / state.zoom));
+        state.pan.y = Math.max(0, Math.min(maxY, state.pan.y - (sy - drag.lastY) / state.zoom));
+        drag.lastX = sx; drag.lastY = sy;
         canvas.style.cursor = 'grabbing';
       } else if (!drag) {
-        const overBtn  = inRect(x, y, RULER_BTN) || inRect(x, y, GRID_BTN);
-        const overKnob = overFillKnob(x, y) || overDrainKnob(x, y);
-        canvas.style.cursor = (overBtn || overKnob) ? 'pointer'
-          : (overGauge(x, y) || overRulerWidget(x, y)) ? 'grab' : 'default';
+        const overHUD  = inRect(sx, sy, RULER_BTN) || inRect(sx, sy, GRID_BTN) ||
+                         inRect(sx, sy, ZOOM_MINUS_BTN) || inRect(sx, sy, ZOOM_PLUS_BTN);
+        const overKnob = overFillKnob(wx, wy) || overDrainKnob(wx, wy);
+        canvas.style.cursor = (overHUD || overKnob) ? 'pointer'
+          : (overGauge(wx, wy) || overRulerWidget(wx, wy)) ? 'grab'
+          : state.zoom > 1 ? 'grab'
+          : 'default';
       }
     });
 
