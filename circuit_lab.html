@@ -144,23 +144,26 @@
     const markDirty = () => { dirty = true; };
 
     // ── Battery slider management ────────────────────────────
+    function batLabel(v) {
+      return '<i>U</i> = ' + v.toFixed(1) + ' V';
+    }
     function createBatterySlider(p) {
       const div = document.createElement('div');
       div.style.cssText =
-        'position:absolute;display:flex;align-items:center;gap:4px;' +
-        'background:rgba(255,255,255,0.92);border-radius:10px;padding:4px 6px 4px 5px;' +
+        'position:absolute;display:flex;align-items:center;gap:2px;' +
+        'background:rgba(255,255,255,0.92);border-radius:10px;padding:4px 5px 4px 5px;' +
         'box-shadow:0 1px 4px rgba(0,0,0,0.22);z-index:4;' +
         'font-size:11px;color:#334455;font-family:Segoe UI,system-ui,sans-serif;';
       const sl = document.createElement('input');
       sl.type = 'range'; sl.min = 0; sl.max = 120; sl.step = 0.1;
       sl.value = p.volts;
-      sl.style.cssText = 'width:59px;cursor:pointer;margin:0;accent-color:#4CAF50;';
+      sl.style.cssText = 'width:44px;cursor:pointer;margin:0;accent-color:#4CAF50;';
       const lb = document.createElement('span');
-      lb.style.cssText = 'min-width:29px;font-weight:600;text-align:right;white-space:nowrap;';
-      lb.textContent = p.volts.toFixed(1) + ' V';
+      lb.style.cssText = 'min-width:50px;font-weight:600;text-align:right;white-space:nowrap;';
+      lb.innerHTML = batLabel(p.volts);
       sl.addEventListener('input', () => {
         p.volts = parseFloat(sl.value);
-        lb.textContent = p.volts.toFixed(1) + ' V';
+        lb.innerHTML = batLabel(p.volts);
         markDirty();
       });
       // prevent slider clicks from starting a canvas drag
@@ -189,7 +192,7 @@
         const nrm = partNormal(p);
         // offset 28 px "downward" (opposite of nrm which points up)
         const ox = -nrm.nx * 28, oy = -nrm.ny * 28;
-        const slW = 105; // approx div width
+        const slW = 108; // approx div width
         const x = Math.round(m.x + ox) - slW / 2;
         const y = Math.round(m.y + oy);
         p._sliderDiv.style.left = Math.max(TRAY_W + 2, Math.min(W - slW - 2, x)) + 'px';
@@ -197,7 +200,7 @@
         // sync if voltage was changed elsewhere
         if (Math.abs(parseFloat(p._sliderIn.value) - p.volts) > 0.04) {
           p._sliderIn.value = p.volts;
-          p._sliderLb.textContent = p.volts.toFixed(1) + ' V';
+          p._sliderLb.innerHTML = batLabel(p.volts);
         }
       }
     }
