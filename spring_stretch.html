@@ -7,16 +7,39 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
+      position: relative;
       width: 384px; height: 468px; overflow: hidden;
       background: #f5f5f5;
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none; -webkit-user-select: none;
     }
     canvas { display: block; touch-action: none; }
+    #zoom-bar {
+      position: absolute; display: none;
+      align-items: center; gap: 4px;
+      background: rgba(255,255,255,0.93);
+      border: 1px solid rgba(0,0,0,0.14); border-radius: 6px;
+      padding: 3px 7px; z-index: 2; pointer-events: auto; white-space: nowrap;
+    }
+    #zoom-bar label { font-size: 10px; color: #2c3540; }
+    #zoom-bar input[type=range] { width: 84px; cursor: pointer; }
+    #zoom-val { font: bold 10px 'Segoe UI', sans-serif; color: #2c3540; min-width: 28px; }
+    #reset-view {
+      padding: 1px 6px; border-radius: 4px; background: #b0b8c4;
+      border: 1px solid #8a9aaa; color: #fff;
+      font: bold 9px 'Segoe UI', sans-serif; cursor: pointer;
+    }
+    #reset-view.active { background: #e8762d; border-color: #bf5a18; }
   </style>
 </head>
 <body>
 <canvas id="c" width="384" height="468"></canvas>
+<div id="zoom-bar">
+  <label for="zoom-slider">Zoom</label>
+  <input type="range" id="zoom-slider" min="1" max="4" step="0.01" value="1">
+  <span id="zoom-val">1.0×</span>
+  <button id="reset-view">Reset View</button>
+</div>
 <script>
 (() => {
   'use strict';
@@ -48,6 +71,7 @@
     return isFinite(v) ? Math.min(K_MAX, Math.max(K_MIN, v)) : K_DEFAULT;
   };
   const K1_INIT = parseK('k1');
+  const _zoomMode = qs.get('zoom') === 'true';
 
   // ── Scene objects ───────────────────────────────────────────────────────
   const springs = [
@@ -89,6 +113,22 @@
   const springEndY = s => ANCHOR_Y + (L0 + s.ext * 100) * PXCM;
   const extFromEndY = ey => ((ey - ANCHOR_Y) / PXCM - L0) / 100;
   const floorExt = mass => ((FLOOR_Y - HOOK_H - mass.h - ANCHOR_Y) / PXCM - L0) / 100;
+  const eqExt = s => (s.massIdx >= 0 ? masses[s.massIdx].m * G / s.k : 0);
+
+  // ── Zoom / Pan state ────────────────────────────────────────────────────
+  const ZOOM_MIN = 1, ZOOM_MAX = 4;
+  let zoom = 1, panX = 0, panY = 0;
+  function clampPan() {
+    panX = clamp(panX, 0, Math.max(0, W * (zoom - 1)));
+    panY = clamp(panY, 0, Math.max(0, H * (zoom - 1)));
+  }
+  function applyZoom(nz, cx, cy) {
+    nz = clamp(nz, ZOOM_MIN, ZOOM_MAX);
+    const wx = (cx + panX) / zoom, wy = (cy + panY) / zoom;
+    panX = wx * nz - cx; panY = wy * nz - cy;
+    zoom = nz; clampPan();
+  }
+  function resetView() { zoom = 1; panX = 0; panY = 0; }
 
   function rr(x, y, w, h, r) {
     ctx.beginPath();
@@ -103,19 +143,21 @@
   // ── Canvas + scale-to-iframe-width ──────────────────────────────────────
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
+  const zoomBar = document.getElementById('zoom-bar');
+  if (_zoomMode) { zoomBar.style.display = 'flex'; }
   let scale = 1, dpr = 1;
   function fit() {
     const vw = window.innerWidth || W;
     let s = clamp(vw / W, 0.3, 1.0);
     if (Math.abs(s - 1) < 0.03) s = 1;
-    scale = s;
-    dpr = window.devicePixelRatio || 1;
+    scale = s; dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(W * s * dpr);
     canvas.height = Math.round(H * s * dpr);
     canvas.style.width = (W * s) + 'px';
     canvas.style.height = (H * s) + 'px';
     document.body.style.width = (W * s) + 'px';
     document.body.style.height = (H * s) + 'px';
+    if (_zoomMode) { zoomBar.style.top = Math.round(34 * s) + 'px'; zoomBar.style.left = '0px'; }
   }
   window.addEventListener('resize', fit);
 
@@ -214,9 +256,13 @@
   }
 
   // ── Pointer events ──────────────────────────────────────────────────────
-  const toLocal = e => {
+  const toCanvas = e => {
     const r = canvas.getBoundingClientRect();
     return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
+  };
+  const toLocal = e => {
+    const [cx, cy] = toCanvas(e);
+    return _zoomMode ? [(cx + panX) / zoom, (cy + panY) / zoom] : [cx, cy];
   };
 
   canvas.addEventListener('pointerdown', e => {
@@ -237,12 +283,22 @@
       drag = { type: 'ruler', dx: mx - ruler.x, dy: my - ruler.y };
       return;
     }
+    if (_zoomMode && zoom > 1) {
+      const [cx, cy] = toCanvas(e);
+      drag = { type: 'pan', startCx: cx, startCy: cy, startPanX: panX, startPanY: panY };
+    }
   });
 
   canvas.addEventListener('pointermove', e => {
     const [mx, my] = toLocal(e);
     if (!drag) { updateCursor(mx, my); return; }
     canvas.style.cursor = 'grabbing';
+    if (drag.type === 'pan') {
+      const [cx, cy] = toCanvas(e);
+      panX = clamp(drag.startPanX + (drag.startCx - cx), 0, Math.max(0, W * (zoom - 1)));
+      panY = clamp(drag.startPanY + (drag.startCy - cy), 0, Math.max(0, H * (zoom - 1)));
+      return;
+    }
     if (drag.type === 'ruler') {
       ruler.x = clamp(mx - drag.dx, -RUL_W + 16, W - 16);
       ruler.y = clamp(my - drag.dy, -RUL_H + 30, H - 30);
@@ -295,11 +351,24 @@
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
+  if (_zoomMode) {
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const [cx, cy] = toCanvas(e);
+      applyZoom(zoom * Math.exp(-e.deltaY * 0.001), cx, cy);
+    }, { passive: false });
+    const _zsl = document.getElementById('zoom-slider');
+    const _rvb = document.getElementById('reset-view');
+    if (_zsl) _zsl.addEventListener('input', () => applyZoom(parseFloat(_zsl.value), W / 2, H / 2));
+    if (_rvb) _rvb.addEventListener('click', resetView);
+  }
+
   function updateCursor(mx, my) {
     let c = 'default';
     if (dist(mx, my, RESET.x, RESET.y) <= RESET.r + 3) c = 'pointer';
     else if (massHit(mx, my) >= 0) c = 'grab';
     else if (inRect(mx, my, ruler.x, ruler.y, RUL_W, RUL_H)) c = 'grab';
+    else if (_zoomMode && zoom > 1) c = 'grab';
     canvas.style.cursor = c;
   }
 
@@ -421,19 +490,55 @@
     ctx.fillText('↺', RESET.x, RESET.y + 6);
   }
 
+  function drawRefLines() {
+    ctx.save(); ctx.lineCap = 'butt';
+    const uy = ANCHOR_Y + L0 * PXCM;
+    ctx.setLineDash([7, 5]); ctx.strokeStyle = '#3a6fd8'; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(52, uy); ctx.lineTo(344, uy); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#3a6fd8'; ctx.font = '10px Segoe UI'; ctx.textAlign = 'left';
+    ctx.fillText('Natural Length', springs[0].x + 22, uy - 3);
+    for (const s of springs) {
+      if (s.massIdx < 0) continue;
+      const ry = ANCHOR_Y + (L0 + eqExt(s) * 100) * PXCM;
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = '#2e9e44'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(s.x - 52, ry); ctx.lineTo(s.x + 52, ry); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#2e9e44'; ctx.font = '10px Segoe UI'; ctx.textAlign = 'left';
+      ctx.fillText('Resting Position', s.x + 22, ry - 3);
+    }
+    ctx.restore();
+  }
+
+  function syncZoomControls() {
+    if (!_zoomMode) return;
+    const sl = document.getElementById('zoom-slider');
+    const vl = document.getElementById('zoom-val');
+    const rb = document.getElementById('reset-view');
+    if (sl) sl.value = zoom;
+    if (vl) vl.textContent = zoom.toFixed(1) + '×';
+    if (rb) rb.classList.toggle('active', zoom > 1.001 || panX > 0.5 || panY > 0.5);
+  }
+
   function draw() {
-    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    const s = scale * dpr;
+    ctx.setTransform(s, 0, 0, s, 0, 0);
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, W, H);
 
-    drawBarAndShelf();
-    drawSpring(springs[0]);
-    drawRuler();
-    for (const i of massDrawOrder()) {
-      drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
+    if (_zoomMode) {
+      ctx.setTransform(s * zoom, 0, 0, s * zoom, -panX * s, -panY * s);
+      drawBarAndShelf(); drawRefLines(); drawSpring(springs[0]); drawRuler();
+      for (const i of massDrawOrder()) drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
+      drawSnapHighlight();
+      ctx.setTransform(s, 0, 0, s, 0, 0);
+    } else {
+      drawBarAndShelf(); drawSpring(springs[0]); drawRuler();
+      for (const i of massDrawOrder()) drawMass(masses[i], !!(drag && drag.type === 'mass' && drag.i === i));
+      drawSnapHighlight();
     }
-    drawSnapHighlight();
     drawReset();
+    syncZoomControls();
   }
 
   // ── Main loop ───────────────────────────────────────────────────────────
@@ -495,48 +600,45 @@
 })();
 </script>
 <script>
-// EigenNode auto-height v2.5
-(function() {
-  var BUFFER = 4;
-  var H_SCROLLBAR = 18;
-  var measuring = false;
-  function measure() {
-    if (measuring) return 0;
-    var b = document.body, h = document.documentElement;
-    if (!b) return 0;
-    measuring = true;
-    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
-    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
-    b.style.setProperty('height', 'auto', 'important');
-    b.style.setProperty('min-height', '0', 'important');
-    var content = b.scrollHeight || 0;
-    var kids = b.children;
-    for (var ki = 0; ki < kids.length; ki++) {
-      if ((window.getComputedStyle(kids[ki]).position || '') === 'absolute') {
-        var r = kids[ki].getBoundingClientRect();
-        if (r.height > 0) {
-          var bot = Math.ceil(r.bottom + (window.pageYOffset || 0));
-          if (bot > content) content = bot;
-        }
-      }
-    }
-    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
-    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
-    measuring = false;
-    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
-    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+// responsive-scale-to-fit v1 -- replaces the fixed-size embed + height report.
+// Scales the whole sim (the document body) to fit the iframe/sticky it is
+// given: preserve aspect ratio, centre, cap the zoom. The transform is
+// presentation only. Tunable per embed: ?maxscale= (zoom cap), ?maxw= (px
+// width cap), ?h= (exact reported height), ?maxh= (anti-spill ceiling).
+// NOTE: the AoPS live-chat embed sizes the iframe from its height= attribute
+// and ignores the reported height; set height= there.
+(function () {
+  var DOC = document.documentElement;
+  var Q = new URLSearchParams(location.search);
+  var num = function (k, d) { return Q.has(k) && isFinite(+Q.get(k)) ? +Q.get(k) : d; };
+  var MAXSCALE = num('maxscale', 2.4), MAXW = num('maxw', 0);
+  var FIXED_H = num('h', 0), REPORT_MAX = num('maxh', 320), REPORT_MIN = 140;
+  var lastH = 0;
+  function fit() {
+    var b = document.body; if (!b) return;
+    var natW = b.offsetWidth, natH = b.offsetHeight;
+    if (!natW || !natH) return;
+    var vw = DOC.clientWidth, vh = DOC.clientHeight;
+    var cap = MAXW > 0 ? Math.min(MAXSCALE, MAXW / natW) : MAXSCALE;
+    var s = Math.min(vw / natW, vh / natH, cap);
+    if (!isFinite(s) || s <= 0) s = Math.min(vw / natW, cap);
+    b.style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+    var rh = FIXED_H > 0 ? Math.max(80, Math.min(2000, FIXED_H))
+      : Math.max(REPORT_MIN, Math.min(REPORT_MAX, Math.round(natH * Math.min(vw / natW, cap))));
+    if (Math.abs(rh - lastH) >= 2) { lastH = rh; try { window.parent.postMessage({ type: 'resize', height: rh }, '*'); } catch (e) {} }
   }
-  var last = 0;
-  function report() {
-    var h = measure();
-    if (h > 0 && Math.abs(h - last) >= 2) {
-      last = h;
-      window.parent.postMessage({ type: 'resize', height: h }, '*');
-    }
+  function boot() {
+    var b = document.body; if (!b) return;
+    DOC.style.cssText += ';width:100%;height:100%;margin:0;overflow:hidden;background:transparent;';
+    b.style.position = 'absolute'; b.style.top = '50%'; b.style.left = '50%';
+    b.style.margin = '0'; b.style.transformOrigin = 'center center'; b.style.willChange = 'transform';
+    fit();
+    addEventListener('resize', fit); addEventListener('orientationchange', fit);
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(DOC);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
   }
-  window.addEventListener('load', report);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
-  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+  if (document.body) boot(); else addEventListener('DOMContentLoaded', boot);
+  addEventListener('load', fit);
 })();
 </script>
 </body>
