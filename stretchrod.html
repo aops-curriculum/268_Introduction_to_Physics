@@ -93,15 +93,37 @@
   function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 
   function innerSpringColor(lenRatio) {
-    // compress_factor = (len/rest)^-13; color = (cf*0.2, cf*0.2, 0.2/cf)
+    // compressed → orange/yellow; stretched → dark; rest → gray (#666)
     const cf = Math.pow(lenRatio, -13);
-    return `rgb(${Math.round(clamp01(cf * 0.2) * 255)},${Math.round(clamp01(cf * 0.2) * 255)},${Math.round(clamp01(0.2 / cf) * 255)})`;
+    return `rgb(${Math.round(clamp01(cf * 0.4) * 255)},${Math.round(clamp01(cf * 0.4) * 255)},${Math.round(clamp01(0.4 / cf) * 255)})`;
   }
 
   function outerSpringColor(lenRatio) {
-    // stretch_factor = (len/rest)^-13; color = (sf*0.2, 0.2/sf, 0.2/sf)
+    // stretched → cyan; compressed → dark; rest → gray (#666)
     const sf = Math.pow(lenRatio, -13);
-    return `rgb(${Math.round(clamp01(sf * 0.2) * 255)},${Math.round(clamp01(0.2 / sf) * 255)},${Math.round(clamp01(0.2 / sf) * 255)})`;
+    return `rgb(${Math.round(clamp01(sf * 0.4) * 255)},${Math.round(clamp01(0.4 / sf) * 255)},${Math.round(clamp01(0.4 / sf) * 255)})`;
+  }
+
+  function drawSpringCoil(x1, y1, x2, y2, color) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) return;
+    const ux = dx / len, uy = dy / len;   // unit along spring (pixel space)
+    const nx = -uy,      ny =  ux;        // unit perpendicular (left of direction)
+    const N_COILS = 8;
+    const AMP = Math.max(2, scale * 0.1); // amplitude in pixels
+    const STEPS = N_COILS * 16;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    for (let i = 1; i <= STEPS; i++) {
+      const t = i / STEPS;
+      const s = Math.sin(t * N_COILS * 2 * Math.PI);
+      ctx.lineTo(x1 + t * dx + s * AMP * nx, y1 + t * dy + s * AMP * ny);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1.5, scale * 0.025);
+    ctx.lineCap = 'butt';
+    ctx.stroke();
   }
 
   function draw() {
@@ -163,11 +185,9 @@
       });
     }
 
-    const SPRING_W = Math.max(2, scale * 0.04);
-    const BALL_R   = Math.max(2, scale * 0.1);
+    const BALL_R = Math.max(2, scale * 0.1);
 
-    // Draw springs (segments between adjacent balls)
-    ctx.lineWidth = SPRING_W;
+    // Draw springs as coils between adjacent balls
     for (let j = 0; j < NUM_SEGS; j++) {
       const iA = innerBalls[j], iB = innerBalls[j + 1];
       const oA = outerBalls[j], oB = outerBalls[j + 1];
@@ -177,17 +197,8 @@
       const innerRatio = innerLen / restLength;
       const outerRatio = outerLen / restLength;
 
-      ctx.beginPath();
-      ctx.moveTo(gx(iA.x), gy(iA.y));
-      ctx.lineTo(gx(iB.x), gy(iB.y));
-      ctx.strokeStyle = innerSpringColor(innerRatio);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(gx(oA.x), gy(oA.y));
-      ctx.lineTo(gx(oB.x), gy(oB.y));
-      ctx.strokeStyle = outerSpringColor(outerRatio);
-      ctx.stroke();
+      drawSpringCoil(gx(iA.x), gy(iA.y), gx(iB.x), gy(iB.y), innerSpringColor(innerRatio));
+      drawSpringCoil(gx(oA.x), gy(oA.y), gx(oB.x), gy(oB.y), outerSpringColor(outerRatio));
     }
 
     // Draw balls
