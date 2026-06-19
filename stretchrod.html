@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Stretch Rod</title>
+  <!-- Original AoPS interactive. Faithful 2D replacement for the GlowScript
+       "stretchrod" program: a bent rod (modelling a DNA segment) showing how
+       bending causes compression on the inner strand and tension on the outer strand.
+       The slider controls the curvature (kappa). Inner segments turn orange/yellow
+       when compressed; outer segments turn cyan when stretched. -->
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: #fff; font-family: 'Segoe UI', system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+    canvas { display: block; }
+    .controls { padding: 8px 12px; font-size: 14px; }
+    .ctrl-row { display: flex; align-items: center; gap: 10px; }
+    input[type=range] { width: 260px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+<div class="controls">
+  <div class="ctrl-row">
+    <input type="range" id="bendSlider" min="0" max="100" step="1" value="0">
+    <span id="bendLabel">bending: 0%</span>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<script>
+(function() {
+  var BUFFER = 4, H_SCROLLBAR = 18, measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var hgt = measure();
+    if (hgt > 0 && Math.abs(hgt - last) >= 2) { last = hgt; window.parent.postMessage({ type: 'resize', height: hgt }, '*'); }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+})();
+</script>
+<script>
+(() => {
+  'use strict';
+
+  const MAXW     = 500;
+  const NUM_SEGS = 6; // 7 balls → 6 segments
+  const L        = 5; // neutral arc length (scene units)
+  const T        = 1; // thickness (inner-to-outer separation)
+
+  const canvas     = document.getElementById('c');
+  const ctx        = canvas.getContext('2d');
+  const bendSlider = document.getElementById('bendSlider');
+  const bendLabel  = document.getElementById('bendLabel');
+
+  let W, H, scale, dpr;
+  // origin in canvas coords maps to GlowScript (0, 0)
+  let ox, oy;
+
+  function layout() {
+    W     = Math.min(window.innerWidth || MAXW, MAXW);
+    H     = Math.round(W * 0.5);
+    scale = W / 6.5; // ~6 GS units wide
+    ox    = W / 2;
+    oy    = H * 0.55; // put GS y=0 slightly above canvas center
+    dpr   = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    document.body.style.width = W + 'px';
+  }
+
+  // GlowScript to canvas coords (y flipped)
+  function gx(x) { return ox + x * scale; }
+  function gy(y) { return oy - y * scale; }
+
+  function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+  function innerSpringColor(lenRatio) {
+    // compress_factor = (len/rest)^-13; color = (cf*0.2, cf*0.2, 0.2/cf)
+    const cf = Math.pow(lenRatio, -13);
+    return `rgb(${Math.round(clamp01(cf * 0.2) * 255)},${Math.round(clamp01(cf * 0.2) * 255)},${Math.round(clamp01(0.2 / cf) * 255)})`;
+  }
+
+  function outerSpringColor(lenRatio) {
+    // stretch_factor = (len/rest)^-13; color = (sf*0.2, 0.2/sf, 0.2/sf)
+    const sf = Math.pow(lenRatio, -13);
+    return `rgb(${Math.round(clamp01(sf * 0.2) * 255)},${Math.round(clamp01(0.2 / sf) * 255)},${Math.round(clamp01(0.2 / sf) * 255)})`;
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, W, H);
+
+    const pct   = parseFloat(bendSlider.value) / 100;
+    // kappa ranges 0.001 (straight) to 0.401 (maximally bent)
+    const kappa = 0.001 + pct * 0.4;
+    const r0    = 1 / kappa;
+    const rIn   = r0 - T / 2;
+    const rOut  = r0 + T / 2;
+    const theta = L / r0;        // total angle of arc
+    const th0   = -theta / 2;   // start angle
+
+    // Center of curvature is at GS (0, -r0); we shift the scene so the arc
+    // is centered vertically. The arc midpoint is at GS (0, -r0 + r0) = (0,0).
+    const centerX = 0;
+    const centerY = -r0;
+
+    // Background (DNA segment fill) — slightly wider/taller than the rod
+    const rBgIn  = rIn  - T * 0.2;
+    const rBgOut = rOut + T * 0.2;
+    const BG_SEGS = 60;
+    ctx.beginPath();
+    for (let k = 0; k <= BG_SEGS; k++) {
+      const th = th0 * 1.05 + (k / BG_SEGS) * theta * 1.05;
+      const x  = centerX + rBgOut * Math.sin(th);
+      const y  = centerY + rBgOut * Math.cos(th);
+      if (k === 0) ctx.moveTo(gx(x), gy(y)); else ctx.lineTo(gx(x), gy(y));
+    }
+    for (let k = BG_SEGS; k >= 0; k--) {
+      const th = th0 * 1.05 + (k / BG_SEGS) * theta * 1.05;
+      const x  = centerX + rBgIn * Math.sin(th);
+      const y  = centerY + rBgIn * Math.cos(th);
+      ctx.lineTo(gx(x), gy(y));
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255, 238, 191, 0.8)';
+    ctx.fill();
+
+    // Compute ball positions on inner and outer strands
+    // Rest length = center-to-center distance between adjacent balls when straight
+    const restLength = L / NUM_SEGS;
+
+    const innerBalls = [];
+    const outerBalls = [];
+    for (let i = 0; i <= NUM_SEGS; i++) {
+      const thBall = th0 + (i / NUM_SEGS) * theta;
+      innerBalls.push({
+        x: centerX + rIn  * Math.sin(thBall),
+        y: centerY + rIn  * Math.cos(thBall),
+      });
+      outerBalls.push({
+        x: centerX + rOut * Math.sin(thBall),
+        y: centerY + rOut * Math.cos(thBall),
+      });
+    }
+
+    const SPRING_W = Math.max(2, scale * 0.04);
+    const BALL_R   = Math.max(2, scale * 0.1);
+
+    // Draw springs (segments between adjacent balls)
+    ctx.lineWidth = SPRING_W;
+    for (let j = 0; j < NUM_SEGS; j++) {
+      const iA = innerBalls[j], iB = innerBalls[j + 1];
+      const oA = outerBalls[j], oB = outerBalls[j + 1];
+
+      const innerLen   = Math.hypot(iB.x - iA.x, iB.y - iA.y);
+      const outerLen   = Math.hypot(oB.x - oA.x, oB.y - oA.y);
+      const innerRatio = innerLen / restLength;
+      const outerRatio = outerLen / restLength;
+
+      ctx.beginPath();
+      ctx.moveTo(gx(iA.x), gy(iA.y));
+      ctx.lineTo(gx(iB.x), gy(iB.y));
+      ctx.strokeStyle = innerSpringColor(innerRatio);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(gx(oA.x), gy(oA.y));
+      ctx.lineTo(gx(oB.x), gy(oB.y));
+      ctx.strokeStyle = outerSpringColor(outerRatio);
+      ctx.stroke();
+    }
+
+    // Draw balls
+    ctx.fillStyle = '#d0d0d0';
+    for (let i = 0; i <= NUM_SEGS; i++) {
+      ctx.beginPath();
+      ctx.arc(gx(innerBalls[i].x), gy(innerBalls[i].y), BALL_R, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(gx(outerBalls[i].x), gy(outerBalls[i].y), BALL_R, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+
+  bendSlider.addEventListener('input', () => {
+    bendLabel.textContent = 'bending: ' + bendSlider.value + '%';
+    draw();
+  });
+  window.addEventListener('resize', () => { layout(); draw(); });
+
+  layout();
+  draw();
+})();
+</script>
+</body>
+</html>

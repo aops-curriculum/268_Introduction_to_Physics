@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TASEP</title>
+  <!-- Original AoPS interactive. Faithful 2D replacement for the GlowScript
+       "TASEP" program: Totally Asymmetric Simple Exclusion Process (a 1D lattice
+       model for molecular motor transport / traffic). Particles enter from the left
+       with rate alpha, hop right when the next cell is empty, and exit at rate beta. -->
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: #fff; font-family: 'Segoe UI', system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+    canvas { display: block; }
+    .controls { padding: 8px 12px; font-size: 14px; }
+    .ctrl-row { margin-bottom: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    input[type=range] { width: 180px; vertical-align: middle; }
+    .stat { margin-top: 2px; font-size: 14px; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="controls">
+  <div class="ctrl-row">
+    <input type="range" id="cellsSlider" min="10" max="500" step="5" value="20">
+    <span id="cellsLabel">cells: 20</span>
+  </div>
+  <div class="ctrl-row">
+    <input type="range" id="alphaSlider" min="0" max="1" step="0.02" value="0.20">
+    <span id="alphaLabel">α: 0.20</span>
+  </div>
+  <div class="ctrl-row">
+    <input type="range" id="betaSlider" min="0" max="1" step="0.02" value="0.30">
+    <span id="betaLabel">β: 0.30</span>
+  </div>
+  <div class="ctrl-row">
+    <input type="range" id="speedSlider" min="1" max="300" step="1" value="2">
+    <span id="speedLabel">simulation speed: 2</span>
+  </div>
+  <div class="stat" id="fluxLabel">long term average flux: will show here after running at least 100 time steps</div>
+  <div class="stat" id="filledLabel">fraction of cells filled: —</div>
+</div>
+<script>
+(function() {
+  var BUFFER = 4, H_SCROLLBAR = 18, measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var hgt = measure();
+    if (hgt > 0 && Math.abs(hgt - last) >= 2) { last = hgt; window.parent.postMessage({ type: 'resize', height: hgt }, '*'); }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+})();
+</script>
+<script>
+(() => {
+  'use strict';
+
+  const MAXW = 800;
+
+  const canvas      = document.getElementById('c');
+  const ctx         = canvas.getContext('2d');
+  const cellsSlider = document.getElementById('cellsSlider');
+  const alphaSlider = document.getElementById('alphaSlider');
+  const betaSlider  = document.getElementById('betaSlider');
+  const speedSlider = document.getElementById('speedSlider');
+  const cellsLabel  = document.getElementById('cellsLabel');
+  const alphaLabel  = document.getElementById('alphaLabel');
+  const betaLabel   = document.getElementById('betaLabel');
+  const speedLabel  = document.getElementById('speedLabel');
+  const fluxLabel   = document.getElementById('fluxLabel');
+  const filledLabel = document.getElementById('filledLabel');
+
+  let W, cellW, cellH, dpr;
+  let numCells, alpha, beta;
+  let occupied = [];
+  let minTimesteps, timesteps, runningFlux, runningFluxCount;
+
+  function layout() {
+    W     = Math.min(window.innerWidth || MAXW, MAXW);
+    cellW = W / numCells;
+    cellH = Math.max(20, Math.min(50, Math.round(cellW)));
+    dpr   = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(W * dpr);
+    canvas.height = Math.round(cellH * dpr);
+    canvas.style.width  = W + 'px';
+    canvas.style.height = cellH + 'px';
+    document.body.style.width = W + 'px';
+  }
+
+  function initSim() {
+    numCells     = parseInt(cellsSlider.value);
+    alpha        = parseFloat(alphaSlider.value);
+    beta         = parseFloat(betaSlider.value);
+    minTimesteps = numCells * 5;
+    timesteps    = 0;
+    runningFlux  = 0;
+    runningFluxCount = 0;
+    occupied     = new Array(numCells).fill(false);
+    cellsLabel.textContent = 'cells: ' + numCells;
+    alphaLabel.textContent = 'α: ' + alpha.toFixed(2);
+    betaLabel.textContent  = 'β: ' + beta.toFixed(2);
+    fluxLabel.textContent  = 'long term average flux: will show here after running at least ' + minTimesteps + ' time steps';
+    filledLabel.textContent = 'fraction of cells filled: —';
+    layout();
+  }
+
+  function simStep() {
+    for (let k = 0; k < numCells; k++) {
+      const loc = Math.floor(Math.random() * (numCells - 1)); // 0 to N-2
+      if (occupied[loc] && !occupied[loc + 1]) {
+        occupied[loc]     = false;
+        occupied[loc + 1] = true;
+      }
+    }
+
+    if (Math.random() < alpha && !occupied[0]) occupied[0] = true;
+
+    let left = false;
+    if (Math.random() < beta && occupied[numCells - 1]) {
+      occupied[numCells - 1] = false;
+      left = true;
+    }
+
+    const filledCount = occupied.reduce((s, v) => s + (v ? 1 : 0), 0);
+    filledLabel.textContent = 'fraction of cells filled: ' + (filledCount / numCells).toFixed(3);
+
+    timesteps++;
+    if (timesteps > minTimesteps) {
+      runningFlux += left ? 1 : 0;
+      runningFluxCount++;
+      fluxLabel.textContent = 'long term average flux: ' + (runningFlux / runningFluxCount).toFixed(4);
+    }
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, cellH);
+
+    const gap  = Math.max(0, Math.min(1, cellW * 0.1));
+    const cInner = cellW - gap;
+
+    for (let i = 0; i < numCells; i++) {
+      const x = i * cellW;
+      ctx.fillStyle = '#cccccc';
+      ctx.fillRect(x + gap / 2, 0, cInner, cellH);
+
+      if (occupied[i]) {
+        const r = Math.max(2, cInner * 0.4);
+        ctx.beginPath();
+        ctx.arc(x + cellW / 2, cellH / 2, r, 0, 2 * Math.PI);
+        ctx.fillStyle = '#111111';
+        ctx.fill();
+      }
+    }
+  }
+
+  let lastStepTime = 0;
+  function stepDuration() { return 1000 / parseFloat(speedSlider.value); }
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (!lastStepTime) lastStepTime = now;
+    const sd      = stepDuration();
+    let elapsed   = now - lastStepTime;
+    const maxBatch = Math.min(50, Math.ceil(elapsed / sd));
+    let ran = 0;
+    while (elapsed >= sd && ran < maxBatch) {
+      simStep();
+      lastStepTime += sd;
+      elapsed      -= sd;
+      ran++;
+    }
+    draw();
+  }
+
+  function reset() { initSim(); lastStepTime = 0; }
+
+  cellsSlider.addEventListener('input', reset);
+  alphaSlider.addEventListener('input', () => {
+    alpha = parseFloat(alphaSlider.value);
+    alphaLabel.textContent = 'α: ' + alpha.toFixed(2);
+  });
+  betaSlider.addEventListener('input', () => {
+    beta = parseFloat(betaSlider.value);
+    betaLabel.textContent = 'β: ' + beta.toFixed(2);
+  });
+  speedSlider.addEventListener('input', () => {
+    speedLabel.textContent = 'simulation speed: ' + speedSlider.value;
+  });
+  window.addEventListener('resize', () => { layout(); });
+
+  numCells = parseInt(cellsSlider.value);
+  layout();
+  initSim();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

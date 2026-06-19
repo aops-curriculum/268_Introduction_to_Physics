@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Traffic Running Speed</title>
+  <!-- Original AoPS interactive. Faithful 2D replacement for the GlowScript
+       "trafficrunningspeed" program: NS automaton with long-term cumulative
+       average speed shown after a burn-in of 50 ticks. -->
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: #fff; font-family: 'Segoe UI', system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+    canvas { display: block; }
+    .controls { padding: 8px 12px; font-size: 14px; }
+    .ctrl-row { margin-bottom: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    input[type=range] { width: 160px; vertical-align: middle; }
+    .btn { padding: 1px 7px; font-size: 13px; cursor: pointer; }
+    .stat { margin-top: 4px; font-size: 14px; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="controls">
+  <div class="ctrl-row">
+    <input type="range" id="carSlider" min="1" max="80" step="1" value="10">
+    <span id="carLabel">cars: 10</span>
+    <button class="btn" id="carPlus">+</button>
+    <button class="btn" id="carMinus">−</button>
+  </div>
+  <div class="ctrl-row">
+    <input type="range" id="cellsSlider" min="10" max="200" step="1" value="100">
+    <span id="cellsLabel">cells: 100</span>
+    <button class="btn" id="cellsPlus">+</button>
+    <button class="btn" id="cellsMinus">−</button>
+  </div>
+  <div class="ctrl-row">
+    <input type="range" id="pSlider" min="0" max="1" step="0.01" value="0.10">
+    <span id="pLabel">p: 0.10</span>
+    <button class="btn" id="pPlus">+</button>
+    <button class="btn" id="pMinus">−</button>
+  </div>
+  <div class="ctrl-row">
+    <input type="range" id="speedSlider" min="1" max="20" step="1" value="20">
+    <span id="speedLabel">simulation speed: 20</span>
+    <button class="btn" id="speedPlus">+</button>
+    <button class="btn" id="speedMinus">−</button>
+  </div>
+  <div class="stat" id="longTermLabel">long term average speed: will show here after running at least 50 time steps</div>
+</div>
+<script>
+(function() {
+  var BUFFER = 4, H_SCROLLBAR = 18, measuring = false;
+  function measure() {
+    if (measuring) return 0;
+    var b = document.body, h = document.documentElement;
+    if (!b) return 0;
+    measuring = true;
+    var hOld = b.style.height, hPri = b.style.getPropertyPriority('height');
+    var mOld = b.style.minHeight, mPri = b.style.getPropertyPriority('min-height');
+    b.style.setProperty('height', 'auto', 'important');
+    b.style.setProperty('min-height', '0', 'important');
+    var content = b.scrollHeight || 0;
+    if (hOld) b.style.setProperty('height', hOld, hPri); else b.style.removeProperty('height');
+    if (mOld) b.style.setProperty('min-height', mOld, mPri); else b.style.removeProperty('min-height');
+    measuring = false;
+    var hOverflow = h && (h.scrollWidth - h.clientWidth) >= 4;
+    return Math.ceil(content) + BUFFER + (hOverflow ? H_SCROLLBAR : 0);
+  }
+  var last = 0;
+  function report() {
+    var hgt = measure();
+    if (hgt > 0 && Math.abs(hgt - last) >= 2) { last = hgt; window.parent.postMessage({ type: 'resize', height: hgt }, '*'); }
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+})();
+</script>
+<script>
+(() => {
+  'use strict';
+
+  const SPEED_COLORS = ['#e02424','#f97316','#eab308','#22c55e','#06b6d4','#3b82f6'];
+  const MIN_TICKS    = 50;
+  const MAXW         = 500;
+
+  const canvas         = document.getElementById('c');
+  const ctx            = canvas.getContext('2d');
+  const carSlider      = document.getElementById('carSlider');
+  const cellsSlider    = document.getElementById('cellsSlider');
+  const pSlider        = document.getElementById('pSlider');
+  const speedSlider    = document.getElementById('speedSlider');
+  const carLabel       = document.getElementById('carLabel');
+  const cellsLabel     = document.getElementById('cellsLabel');
+  const pLabel         = document.getElementById('pLabel');
+  const speedLabel     = document.getElementById('speedLabel');
+  const longTermLabel  = document.getElementById('longTermLabel');
+
+  let W, H, R, cx, cy, dpr;
+  let numCars, numCells, p;
+  let cars = [];
+  let tickCount = 0, runningSum = 0, runningCount = 0;
+
+  function layout() {
+    W = Math.min(window.innerWidth || MAXW, MAXW);
+    H = Math.round(W * 0.44);
+    R = Math.round(Math.min(W, H) * 0.38);
+    cx = W / 2; cy = H / 2;
+    dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    document.body.style.width = W + 'px';
+  }
+
+  function initSim() {
+    numCars  = parseInt(carSlider.value);
+    numCells = parseInt(cellsSlider.value);
+    p        = parseFloat(pSlider.value);
+    cars = [];
+    for (let j = 0; j < numCars; j++) {
+      cars.push({ cell: Math.floor(j * numCells / numCars), speed: 5 });
+    }
+    tickCount = 0; runningSum = 0; runningCount = 0;
+    carLabel.textContent   = 'cars: ' + numCars;
+    cellsLabel.textContent = 'cells: ' + numCells;
+    pLabel.textContent     = 'p: ' + p.toFixed(2);
+    longTermLabel.textContent = 'long term average speed: will show here after running at least ' + MIN_TICKS + ' time steps';
+  }
+
+  function tick() {
+    for (const c of cars) if (c.speed < 5) c.speed++;
+
+    const occupied = new Set(cars.map(c => c.cell));
+    for (const c of cars) {
+      for (let d = 1; d <= c.speed; d++) {
+        if (occupied.has((c.cell + d) % numCells)) { c.speed = d - 1; break; }
+      }
+    }
+
+    for (const c of cars) {
+      if (Math.random() < p && c.speed > 0) c.speed--;
+    }
+
+    for (const c of cars) {
+      c.cell = (c.cell + c.speed) % numCells;
+    }
+
+    tickCount++;
+    const avg = cars.reduce((s, c) => s + c.speed, 0) / numCars;
+    if (tickCount >= MIN_TICKS) {
+      runningSum += avg;
+      runningCount++;
+      longTermLabel.textContent = 'long term average speed: ' + (runningSum / runningCount).toFixed(2);
+    }
+  }
+
+  function draw(animT) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    const cellArc  = 2 * Math.PI / numCells;
+    const cellSize = 0.8 * 2 * Math.PI * R / numCells;
+    const carR     = Math.max(2.5, cellSize * 0.5);
+
+    ctx.fillStyle = '#cccccc';
+    for (let i = 0; i < numCells; i++) {
+      const th = cellArc * i;
+      ctx.save();
+      ctx.translate(cx + R * Math.cos(th), cy + R * Math.sin(th));
+      ctx.rotate(th + Math.PI / 2);
+      ctx.fillRect(-cellSize / 2, -cellSize / 2, cellSize, cellSize);
+      ctx.restore();
+    }
+
+    for (const c of cars) {
+      const th = 2 * Math.PI * (c.cell + c.speed * animT) / numCells;
+      ctx.beginPath();
+      ctx.arc(cx + R * Math.cos(th), cy + R * Math.sin(th), carR, 0, 2 * Math.PI);
+      ctx.fillStyle = SPEED_COLORS[Math.max(0, Math.min(5, c.speed))];
+      ctx.fill();
+    }
+  }
+
+  let lastTickTime = 0;
+  function tickDuration() { return 2000 / parseFloat(speedSlider.value); }
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (!lastTickTime) lastTickTime = now;
+    const td = tickDuration();
+    let elapsed = now - lastTickTime;
+    while (elapsed >= td) { tick(); lastTickTime += td; elapsed -= td; }
+    draw(elapsed / td);
+  }
+
+  function reset() { initSim(); lastTickTime = 0; }
+
+  function stepSlider(slider, label, delta, fmt, resetSim) {
+    const v = parseFloat(slider.value) + delta;
+    slider.value = Math.max(parseFloat(slider.min), Math.min(parseFloat(slider.max), v));
+    label.textContent = fmt(parseFloat(slider.value));
+    if (resetSim) reset();
+  }
+
+  carSlider.addEventListener('input', reset);
+  cellsSlider.addEventListener('input', reset);
+  pSlider.addEventListener('input', () => { p = parseFloat(pSlider.value); pLabel.textContent = 'p: ' + p.toFixed(2); });
+  speedSlider.addEventListener('input', () => { speedLabel.textContent = 'simulation speed: ' + speedSlider.value; });
+
+  document.getElementById('carPlus').onclick    = () => stepSlider(carSlider, carLabel, 1, v => 'cars: ' + Math.round(v), true);
+  document.getElementById('carMinus').onclick   = () => stepSlider(carSlider, carLabel, -1, v => 'cars: ' + Math.round(v), true);
+  document.getElementById('cellsPlus').onclick  = () => stepSlider(cellsSlider, cellsLabel, 1, v => 'cells: ' + Math.round(v), true);
+  document.getElementById('cellsMinus').onclick = () => stepSlider(cellsSlider, cellsLabel, -1, v => 'cells: ' + Math.round(v), true);
+  document.getElementById('pPlus').onclick      = () => stepSlider(pSlider, pLabel, 0.01, v => { p = v; return 'p: ' + v.toFixed(2); }, false);
+  document.getElementById('pMinus').onclick     = () => stepSlider(pSlider, pLabel, -0.01, v => { p = v; return 'p: ' + v.toFixed(2); }, false);
+  document.getElementById('speedPlus').onclick  = () => stepSlider(speedSlider, speedLabel, 1, v => 'simulation speed: ' + Math.round(v), false);
+  document.getElementById('speedMinus').onclick = () => stepSlider(speedSlider, speedLabel, -1, v => 'simulation speed: ' + Math.round(v), false);
+
+  window.addEventListener('resize', () => { layout(); });
+
+  layout();
+  initSim();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
