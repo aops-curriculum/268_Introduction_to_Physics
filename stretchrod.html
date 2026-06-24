@@ -6,8 +6,8 @@
   <!-- Original AoPS interactive. Faithful 2D replacement for the GlowScript
        "stretchrod" program: a bent rod (modelling a DNA segment) showing how
        bending causes compression on the inner strand and tension on the outer strand.
-       The slider controls the curvature (kappa). Inner segments turn orange/yellow
-       when compressed; outer segments turn cyan when stretched. -->
+       The slider controls the curvature (kappa). Inner segments turn red
+       when compressed; outer segments turn blue when stretched. -->
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { background: #fff; font-family: 'Segoe UI', system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
@@ -90,7 +90,7 @@
     H     = Math.round(W * 0.5);
     scale = W / 6.5; // ~6 GS units wide
     ox    = W / 2;
-    oy    = H * 0.55; // put GS y=0 slightly above canvas center
+    oy    = H * 0.65; // put GS y=0 (bottom of ∪) in lower portion, arms rise above
     dpr   = window.devicePixelRatio || 1;
     canvas.width  = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
@@ -105,16 +105,13 @@
 
   function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 
-  function innerSpringColor(lenRatio) {
-    // compressed → orange/yellow; stretched → dark; rest → gray (#666)
+  function springColor(lenRatio) {
+    // compressed → red; stretched → blue; rest → gray (#666)
     const cf = Math.pow(lenRatio, -13);
-    return `rgb(${Math.round(clamp01(cf * 0.4) * 255)},${Math.round(clamp01(cf * 0.4) * 255)},${Math.round(clamp01(0.4 / cf) * 255)})`;
-  }
-
-  function outerSpringColor(lenRatio) {
-    // stretched → cyan; compressed → dark; rest → gray (#666)
-    const sf = Math.pow(lenRatio, -13);
-    return `rgb(${Math.round(clamp01(sf * 0.4) * 255)},${Math.round(clamp01(0.4 / sf) * 255)},${Math.round(clamp01(0.4 / sf) * 255)})`;
+    const r = clamp01(cf * 0.4);
+    const b = clamp01((1 / cf) * 0.4);
+    const g = clamp01(0.4 / Math.max(cf, 1 / cf));
+    return `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`;
   }
 
   function drawSpringCoil(x1, y1, x2, y2, color) {
@@ -154,10 +151,9 @@
     const theta = L / r0;        // total angle of arc
     const th0   = -theta / 2;   // start angle
 
-    // Center of curvature is at GS (0, -r0); we shift the scene so the arc
-    // is centered vertically. The arc midpoint is at GS (0, -r0 + r0) = (0,0).
+    // Center of curvature is at GS (0, r0); the arc midpoint is at GS (0,0).
     const centerX = 0;
-    const centerY = -r0;
+    const centerY = r0;
 
     // Background (DNA segment fill) — slightly wider/taller than the rod
     const rBgIn  = rIn  - T * 0.2;
@@ -167,13 +163,13 @@
     for (let k = 0; k <= BG_SEGS; k++) {
       const th = th0 * 1.05 + (k / BG_SEGS) * theta * 1.05;
       const x  = centerX + rBgOut * Math.sin(th);
-      const y  = centerY + rBgOut * Math.cos(th);
+      const y  = centerY - rBgOut * Math.cos(th);
       if (k === 0) ctx.moveTo(gx(x), gy(y)); else ctx.lineTo(gx(x), gy(y));
     }
     for (let k = BG_SEGS; k >= 0; k--) {
       const th = th0 * 1.05 + (k / BG_SEGS) * theta * 1.05;
       const x  = centerX + rBgIn * Math.sin(th);
-      const y  = centerY + rBgIn * Math.cos(th);
+      const y  = centerY - rBgIn * Math.cos(th);
       ctx.lineTo(gx(x), gy(y));
     }
     ctx.closePath();
@@ -190,11 +186,11 @@
       const thBall = th0 + (i / NUM_SEGS) * theta;
       innerBalls.push({
         x: centerX + rIn  * Math.sin(thBall),
-        y: centerY + rIn  * Math.cos(thBall),
+        y: centerY - rIn  * Math.cos(thBall),
       });
       outerBalls.push({
         x: centerX + rOut * Math.sin(thBall),
-        y: centerY + rOut * Math.cos(thBall),
+        y: centerY - rOut * Math.cos(thBall),
       });
     }
 
@@ -210,8 +206,8 @@
       const innerRatio = innerLen / restLength;
       const outerRatio = outerLen / restLength;
 
-      drawSpringCoil(gx(iA.x), gy(iA.y), gx(iB.x), gy(iB.y), innerSpringColor(innerRatio));
-      drawSpringCoil(gx(oA.x), gy(oA.y), gx(oB.x), gy(oB.y), outerSpringColor(outerRatio));
+      drawSpringCoil(gx(iA.x), gy(iA.y), gx(iB.x), gy(iB.y), springColor(innerRatio));
+      drawSpringCoil(gx(oA.x), gy(oA.y), gx(oB.x), gy(oB.y), springColor(outerRatio));
     }
 
     // Draw balls
