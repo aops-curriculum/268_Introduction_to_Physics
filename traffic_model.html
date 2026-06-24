@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="eigennode-aspect" content="3/2">
+<title>Traffic Model</title>
+<!--
+  Original AoPS interactive. Unified, faithful 2D-canvas replacement for the
+  three hand-written GlowScript Nagel-Schreckenberg traffic programs
+  (traffic / trafficspeed / trafficrunningspeed). One file, selected by
+  ?preset=basic|speed|running (plus fine-grained overrides). The cellular-
+  automaton dynamics, parameters, initial layout, per-step timing, and car
+  colors (red 0, orange 1, yellow 2, green 3, cyan 4, blue 5 — the VPython
+  named colors) match the originals exactly; only the RNG stream differs.
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    background: #ffffff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #1f2937;
+    user-select: none; -webkit-user-select: none;
+    display: flex; flex-direction: column;
+  }
+  #c { flex: 1 1 auto; min-height: 0; display: block; width: 100%; }
+
+  #controls {
+    flex: 0 0 auto;
+    padding: 7px 12px 9px;
+    border-top: 1px solid #e5e7eb;
+    background: #f8fafc;
+  }
+  .ctrl-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 18px;
+    row-gap: 5px;
+  }
+  .ctrl { display: flex; align-items: center; gap: 7px; }
+  .ctrl .nm {
+    flex: 0 0 auto; width: 96px;
+    font-size: 13px; color: #334155;
+    white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+  .ctrl input[type=range] {
+    flex: 1 1 auto; min-width: 0; height: 16px;
+    accent-color: #2563eb; cursor: pointer;
+  }
+  .ctrl .btns { flex: 0 0 auto; display: flex; gap: 4px; }
+  .ctrl .btns button {
+    width: 21px; height: 21px; line-height: 1; padding: 0;
+    border: 1px solid #cbd5e1; border-radius: 4px;
+    background: #fff; color: #334155; font-size: 14px; cursor: pointer;
+  }
+  .ctrl .btns button:hover { background: #eef2f7; }
+  .ctrl .btns button:active { background: #e2e8f0; }
+  #stat {
+    margin-top: 7px; font-size: 13.5px; font-weight: 600; color: #0f172a;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (max-width: 430px) {
+    .ctrl-grid { grid-template-columns: 1fr; }
+    .ctrl .nm { width: 88px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="controls">
+  <div class="ctrl-grid" id="ctrlGrid"></div>
+  <div id="stat"></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ── Car colors by speed (VPython named colors, 0..5) ───────────────────
+  //   0 red, 1 orange(1,0.6,0), 2 yellow, 3 green(0,1,0), 4 cyan, 5 blue
+  const SPEED_COLORS = ['#ff0000', '#ff9900', '#ffff00', '#00ff00', '#00ffff', '#0000ff'];
+  const CELL_COLOR   = '#cccccc';   // color.gray(0.8)
+  const VMAX         = 5;           // max car speed (cells/step), hard-coded in all originals
+  const MIN_TICKS    = 50;          // long-term-average burn-in
+
+  // ── URL parameters ─────────────────────────────────────────────────────
+  const Q    = new URLSearchParams(location.search);
+  const num  = (k, d) => Q.has(k) && isFinite(+Q.get(k)) ? +Q.get(k) : d;
+  const str  = (k, d) => Q.has(k) ? Q.get(k) : d;
+  const bool = (k, d) => Q.has(k) ? (Q.get(k) !== '0' && Q.get(k) !== 'false') : d;
+
+  // Presets bundle the defaults of each original program. Individual params
+  // (stats, buttons, cars, cells, p, speed) override the preset.
+  //   basic   = traffic              (no readout, no +/- buttons)
+  //   speed   = trafficspeed         (live average speed + buttons)
+  //   running = trafficrunningspeed  (long-term average + buttons)
+  const PRESETS = {
+    basic:   { stats: 'none',     buttons: false, cars: 1,  cells: 40,  p: 0.10, speed: 2  },
+    speed:   { stats: 'live',     buttons: true,  cars: 10, cells: 40,  p: 0.10, speed: 2  },
+    running: { stats: 'longterm', buttons: true,  cars: 10, cells: 100, p: 0.10, speed: 20 },
+  };
+  const preset = PRESETS[str('preset', 'basic')] || PRESETS.basic;
+
+  const STATS   = str('stats', preset.stats);          // none | live | longterm
+  const BUTTONS = bool('buttons', preset.buttons);
+  const clampI  = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)));
+  const clampF  = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  // ── Control definitions ────────────────────────────────────────────────
+  const CTRLS = [
+    { key: 'cars',  label: 'cars',      min: 1,  max: 80,  step: 1,    reset: true,  fmt: v => String(v | 0) },
+    { key: 'cells', label: 'cells',     min: 10, max: 200, step: 1,    reset: true,  fmt: v => String(v | 0) },
+    { key: 'p',     label: 'p',         min: 0,  max: 1,   step: 0.01, reset: false, fmt: v => v.toFixed(2) },
+    { key: 'speed', label: 'sim speed', min: 1,  max: 20,  step: 1,    reset: false, fmt: v => String(v | 0) },
+  ];
+  const values = {
+    cars:  clampI(num('cars',  preset.cars),  1,  80),
+    cells: clampI(num('cells', preset.cells), 10, 200),
+    p:     clampF(num('p',     preset.p),     0,  1),
+    speed: clampI(num('speed', preset.speed), 1,  20),
+  };
+
+  // ── Build the compact control panel ────────────────────────────────────
+  const grid   = document.getElementById('ctrlGrid');
+  const statEl = document.getElementById('stat');
+  const sliders = {}, labels = {};
+
+  for (const c of CTRLS) {
+    const row = document.createElement('div'); row.className = 'ctrl';
+
+    const nm = document.createElement('span'); nm.className = 'nm';
+    nm.textContent = c.label + ': ' + c.fmt(values[c.key]);
+    labels[c.key] = nm;
+
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = c.min; sl.max = c.max; sl.step = c.step;
+    sl.value = values[c.key];
+    sliders[c.key] = sl;
+
+    row.appendChild(nm); row.appendChild(sl);
+
+    if (BUTTONS) {
+      const btns = document.createElement('div'); btns.className = 'btns';
+      const mk = (txt, delta) => {
+        const b = document.createElement('button'); b.textContent = txt;
+        b.addEventListener('click', () => step(c, delta));
+        return b;
+      };
+      btns.appendChild(mk('−', -c.step));
+      btns.appendChild(mk('+', c.step));
+      row.appendChild(btns);
+    }
+
+    grid.appendChild(row);
+
+    sl.addEventListener('input', () => commit(c, parseFloat(sl.value)));
+  }
+
+  function setLabel(c) { labels[c.key].textContent = c.label + ': ' + c.fmt(values[c.key]); }
+
+  function commit(c, raw) {
+    values[c.key] = c.step < 1 ? clampF(raw, c.min, c.max) : clampI(raw, c.min, c.max);
+    sliders[c.key].value = values[c.key];
+    setLabel(c);
+    if (c.reset) reset();
+  }
+  function step(c, delta) {
+    commit(c, values[c.key] + delta);
+  }
+
+  // ── Simulation state ───────────────────────────────────────────────────
+  let cars = [];
+  let tickCount, timesteps, runningTotal;
+
+  function initSim() {
+    const n = values.cars, cells = values.cells;
+    cars = [];
+    for (let j = 0; j < n; j++) {
+      cars.push({ cell: Math.floor(j * cells / n), speed: VMAX });
+    }
+    tickCount = 0; timesteps = 1; runningTotal = VMAX;
+    if (STATS === 'live') {
+      statEl.textContent = 'average speed: —';
+    } else if (STATS === 'longterm') {
+      statEl.textContent = 'long term average speed: will show here after running at least ' + MIN_TICKS + ' time steps';
+    } else {
+      statEl.style.display = 'none';
+    }
+  }
+
+  // One Nagel-Schreckenberg step, in the GlowScript order: commit the move
+  // using the speed that was just animated (so the animation never jumps),
+  // then recompute each car's speed for the next step.
+  function tick() {
+    const cells = values.cells, p = values.p;
+
+    // 1. move by current speed
+    for (const c of cars) c.cell = (c.cell + c.speed) % cells;
+
+    // 2. accelerate (cap at VMAX)
+    for (const c of cars) if (c.speed < VMAX) c.speed++;
+
+    // 3. slow for the car ahead (gap measured at post-move positions)
+    const occupied = new Set(cars.map(c => c.cell));
+    for (const c of cars) {
+      for (let d = 1; d <= c.speed; d++) {
+        if (occupied.has((c.cell + d) % cells)) { c.speed = d - 1; break; }
+      }
+    }
+
+    // 4. random brake
+    for (const c of cars) if (Math.random() < p && c.speed > 0) c.speed--;
+
+    // 5. statistics (average over all cars, after the speed update)
+    if (STATS === 'live' || STATS === 'longterm') {
+      const avg = cars.reduce((s, c) => s + c.speed, 0) / cars.length;
+      if (STATS === 'live') {
+        statEl.textContent = 'average speed: ' + avg.toFixed(2);
+      } else {
+        timesteps++;
+        if (timesteps === MIN_TICKS) {
+          runningTotal = avg;
+        } else if (timesteps > MIN_TICKS) {
+          runningTotal += avg;
+          const longAvg = runningTotal / (timesteps - MIN_TICKS + 1);
+          statEl.textContent = 'long term average speed: ' + longAvg.toFixed(2);
+        }
+      }
+    }
+    tickCount++;
+  }
+
+  // ── Canvas + drawing ───────────────────────────────────────────────────
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  let cw = 0, ch = 0, dpr = 1, R = 0, cx = 0, cy = 0;
+
+  function layout() {
+    dpr = window.devicePixelRatio || 1;
+    cw = canvas.clientWidth; ch = canvas.clientHeight;
+    if (!cw || !ch) return;
+    canvas.width  = Math.round(cw * dpr);
+    canvas.height = Math.round(ch * dpr);
+    R  = 0.38 * Math.min(cw, ch);
+    cx = cw / 2; cy = ch / 2;
+  }
+
+  function draw(animT) {
+    if (!cw || !ch) return;
+    const cells = values.cells;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+
+    const cellArc  = 2 * Math.PI / cells;
+    const cellSize = 0.8 * 2 * Math.PI * R / cells;   // arc-length per cell * 0.8
+    const carR     = Math.max(2, cellSize * 0.5);
+
+    // background cells (gray squares tangent to the ring)
+    ctx.fillStyle = CELL_COLOR;
+    for (let i = 0; i < cells; i++) {
+      const th = cellArc * i;
+      ctx.save();
+      ctx.translate(cx + R * Math.cos(th), cy + R * Math.sin(th));
+      ctx.rotate(th + Math.PI / 2);
+      ctx.fillRect(-cellSize / 2, -cellSize / 2, cellSize, cellSize);
+      ctx.restore();
+    }
+
+    // cars (circles), interpolated from cell toward cell+speed
+    for (const c of cars) {
+      const th = 2 * Math.PI * (c.cell + c.speed * animT) / cells;
+      ctx.beginPath();
+      ctx.arc(cx + R * Math.cos(th), cy + R * Math.sin(th), carR, 0, 2 * Math.PI);
+      ctx.fillStyle = SPEED_COLORS[Math.max(0, Math.min(VMAX, c.speed))];
+      ctx.fill();
+    }
+  }
+
+  // ── Animation loop ─────────────────────────────────────────────────────
+  // GlowScript runs one NS step every 2/speed seconds (rate(20*speed) over a
+  // 40-frame cycle). We match that with wall-clock pacing and interpolate
+  // smoothly between steps.
+  let lastTickTime = 0;
+  const tickDuration = () => 2000 / values.speed;   // ms per NS step
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (!lastTickTime) lastTickTime = now;
+    const td = tickDuration();
+    let elapsed = now - lastTickTime;
+    let guard = 0;
+    while (elapsed >= td && guard++ < 60) { tick(); lastTickTime += td; elapsed -= td; }
+    draw(Math.min(1, elapsed / td));
+  }
+
+  function reset() { initSim(); lastTickTime = 0; }
+
+  new ResizeObserver(layout).observe(canvas);
+  window.addEventListener('resize', layout);
+
+  layout();
+  initSim();
+  requestAnimationFrame(loop);
+})();
+</script>
+
+
+<!-- CHEAT PANEL — visible only when ?cheat=1 is in the URL -->
+<script>
+(function () {
+  var _cpQ = new URLSearchParams(location.search);
+  if (_cpQ.get('cheat') !== '1') return;
+
+  var CHEAT_DEFS = [
+    { name: 'preset',  type: 'select', values: ['basic', 'speed', 'running'], default: 'basic',
+      desc: 'Bundle of defaults (basic=traffic, speed=trafficspeed, running=trafficrunningspeed)' },
+    { name: 'stats',   type: 'select', values: ['none', 'live', 'longterm'], default: 'none',
+      desc: 'Readout: none, live average speed, or long-term running average' },
+    { name: 'buttons', type: 'toggle', default: 0, desc: 'Show +/- step buttons on the sliders' },
+    { name: 'cars',    type: 'number', min: 1,  max: 80,  step: 1,    default: 10,  desc: 'Number of cars' },
+    { name: 'cells',   type: 'number', min: 10, max: 200, step: 5,    default: 40,  desc: 'Number of road cells' },
+    { name: 'p',       type: 'number', min: 0,  max: 1,   step: 0.05, default: 0.10, desc: 'Random brake probability p' },
+    { name: 'speed',   type: 'number', min: 1,  max: 20,  step: 1,    default: 2,   desc: 'Simulation speed (steps/sec scale)' }
+  ];
+
+  var EMBED_KEYS = ['cheat'];
+
+  function buildCleanUrl(overrides) {
+    var p = new URLSearchParams(location.search);
+    EMBED_KEYS.forEach(function (k) { p.delete(k); });
+    for (var k in overrides) {
+      var v = overrides[k];
+      if (v === null || v === '') p.delete(k); else p.set(k, v);
+    }
+    var qs = p.toString();
+    return location.origin + location.pathname + (qs ? '?' + qs : '');
+  }
+  function buildCheatUrl(overrides) {
+    var base = buildCleanUrl(overrides);
+    return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'cheat=1';
+  }
+
+  var urlLinkEl = null;
+  function updateUrlDisplay(overrides) {
+    if (!urlLinkEl) return;
+    var u = buildCleanUrl(overrides || {});
+    urlLinkEl.href = u; urlLinkEl.textContent = u;
+  }
+  function getEffective(def) {
+    var raw = _cpQ.get(def.name);
+    if (raw === null) return def['default'] !== undefined ? String(def['default']) : '';
+    return raw;
+  }
+  function isTruthy(v) { return v !== '0' && v !== 'false' && v !== 'no' && v !== 'off' && v !== ''; }
+
+  function makeControl(def) {
+    var effective = getEffective(def);
+    if (def.type === 'toggle') {
+      var on = isTruthy(effective);
+      var btn = document.createElement('button');
+      btn.textContent = on ? '1 (on)' : '0 (off)';
+      btn.style.cssText = 'background:' + (on ? '#1b3d1b' : '#3d1b1b') + ';color:' +
+        (on ? '#6dca80' : '#e07070') + ';border:1px solid ' +
+        (on ? '#2a7a3a' : '#8a2a2a') + ';border-radius:3px;padding:3px 10px;' +
+        'cursor:pointer;font-size:12px;font-family:inherit;min-width:70px';
+      btn.addEventListener('click', function () {
+        var u = {}; u[def.name] = on ? '0' : '1'; window.location.href = buildCheatUrl(u);
+      });
+      return btn;
+    }
+    if (def.type === 'select') {
+      var sel = document.createElement('select');
+      sel.style.cssText = 'background:#0d1b2a;color:#c8d8e8;border:1px solid #2a3f5f;' +
+        'border-radius:3px;padding:3px 8px;font-size:12px;font-family:inherit;cursor:pointer';
+      def.values.forEach(function (v) {
+        var opt = document.createElement('option');
+        opt.value = v; opt.textContent = v;
+        if (effective === String(v)) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', function () {
+        var u = {}; u[def.name] = sel.value; window.location.href = buildCheatUrl(u);
+      });
+      return sel;
+    }
+    if (def.type === 'number') {
+      var inp = document.createElement('input');
+      inp.type = 'number'; inp.value = effective;
+      if (def.min !== undefined) inp.min = String(def.min);
+      if (def.max !== undefined) inp.max = String(def.max);
+      if (def.step !== undefined) inp.step = String(def.step);
+      inp.style.cssText = 'background:#0d1b2a;color:#c8d8e8;border:1px solid #2a3f5f;' +
+        'border-radius:3px;padding:3px 6px;width:90px;font-size:12px;font-family:inherit';
+      inp.addEventListener('change', function () {
+        var u = {}; u[def.name] = inp.value; window.location.href = buildCheatUrl(u);
+      });
+      return inp;
+    }
+    var inp2 = document.createElement('input');
+    inp2.type = 'text'; inp2.value = effective;
+    inp2.style.cssText = 'background:#0d1b2a;color:#c8d8e8;border:1px solid #2a3f5f;' +
+      'border-radius:3px;padding:3px 6px;width:220px;font-size:12px;font-family:inherit';
+    inp2.addEventListener('change', function () {
+      var u = {}; u[def.name] = inp2.value; window.location.href = buildCheatUrl(u);
+    });
+    return inp2;
+  }
+  function typeLabel(def) {
+    if (def.type === 'toggle') return '0 | 1';
+    if (def.type === 'select') return def.values.join(' | ');
+    if (def.type === 'number') {
+      if (def.min !== undefined && def.max !== undefined) return def.min + '–' + def.max;
+      if (def.min !== undefined) return '≥' + def.min;
+      if (def.max !== undefined) return '≤' + def.max;
+      return 'number';
+    }
+    return 'text';
+  }
+
+  function render() {
+    var panel = document.createElement('div');
+    panel.id = 'cheat-panel';
+    panel.style.cssText = ['position:fixed', 'bottom:0', 'left:0', 'right:0',
+      'background:rgba(12,18,32,0.97)', 'color:#c8d8e8',
+      'font-family:"Segoe UI",system-ui,monospace', 'font-size:13px',
+      'border-top:2px solid #3a7bd5', 'z-index:2147483647', 'max-height:48vh',
+      'overflow-y:auto', 'padding:10px 16px 14px', 'box-sizing:border-box',
+      'box-shadow:0 -4px 24px rgba(0,0,0,0.6)'].join(';');
+
+    var title = document.createElement('div');
+    title.style.cssText = 'font-weight:bold;font-size:13px;color:#7ab8f5;margin-bottom:8px;' +
+      'display:flex;align-items:center;justify-content:space-between';
+    var titleText = document.createElement('span');
+    titleText.textContent = '🔑 Cheat Panel — ' + location.pathname.split('/').pop();
+    var closeBtn = document.createElement('button');
+    closeBtn.textContent = '×'; closeBtn.title = 'Close cheat panel (reload to restore)';
+    closeBtn.style.cssText = 'background:none;border:none;color:#7ab8f5;font-size:18px;' +
+      'cursor:pointer;padding:0 4px;line-height:1';
+    closeBtn.addEventListener('click', function () { panel.remove(); });
+    title.appendChild(titleText); title.appendChild(closeBtn); panel.appendChild(title);
+
+    var table = document.createElement('table');
+    table.style.cssText = 'border-collapse:collapse;width:100%;margin-bottom:10px';
+    var thead = table.createTHead(); var hrow = thead.insertRow();
+    ['Parameter', 'Type / Values', 'Control', 'Description'].forEach(function (h) {
+      var th = document.createElement('th');
+      th.textContent = h;
+      th.style.cssText = 'text-align:left;padding:4px 10px;border-bottom:1px solid #1e3050;' +
+        'color:#5a8fc0;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap';
+      hrow.appendChild(th);
+    });
+    var tbody = table.createTBody();
+    CHEAT_DEFS.forEach(function (def) {
+      var row = tbody.insertRow();
+      var isSet = _cpQ.has(def.name);
+      row.style.cssText = 'border-bottom:1px solid #131f30;' + (isSet ? 'background:rgba(58,123,213,0.08)' : '');
+      var nc = row.insertCell();
+      nc.style.cssText = 'padding:5px 10px;font-weight:bold;font-size:12px;color:' +
+        (isSet ? '#a8d4ff' : '#7fa8d0') + ';white-space:nowrap;font-family:monospace';
+      nc.textContent = def.name;
+      var tc = row.insertCell();
+      tc.style.cssText = 'padding:5px 10px;color:#5a7a90;font-size:11px;max-width:200px;font-family:monospace';
+      tc.textContent = typeLabel(def);
+      var cc = row.insertCell();
+      cc.style.cssText = 'padding:4px 10px;white-space:nowrap';
+      cc.appendChild(makeControl(def));
+      var dc = row.insertCell();
+      dc.style.cssText = 'padding:5px 10px;color:#8aa0b0;font-size:12px';
+      dc.textContent = (def.desc || '') + (def['default'] !== undefined ? ' (default: ' + def['default'] + ')' : '');
+    });
+    panel.appendChild(table);
+
+    var urlBox = document.createElement('div');
+    urlBox.style.cssText = 'background:#080d1a;border:1px solid #1e3050;border-radius:4px;' +
+      'padding:7px 12px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap';
+    var urlLabel = document.createElement('span');
+    urlLabel.style.cssText = 'color:#5a8fc0;font-size:11px;text-transform:uppercase;' +
+      'letter-spacing:0.06em;white-space:nowrap;flex-shrink:0';
+    urlLabel.textContent = 'URL:';
+    urlLinkEl = document.createElement('a');
+    urlLinkEl.style.cssText = 'color:#5fba7d;word-break:break-all;font-size:12px;font-family:monospace;text-decoration:none';
+    urlLinkEl.addEventListener('click', function (e) { e.preventDefault(); window.location.href = buildCheatUrl({}); });
+    var copyBtn = document.createElement('button');
+    copyBtn.textContent = 'copy';
+    copyBtn.style.cssText = 'background:#1a3050;color:#7ab8f5;border:1px solid #2a4a70;' +
+      'border-radius:3px;padding:2px 8px;font-size:11px;font-family:inherit;cursor:pointer;' +
+      'white-space:nowrap;flex-shrink:0;margin-left:4px';
+    copyBtn.addEventListener('click', function () {
+      var url = urlLinkEl ? urlLinkEl.href : buildCleanUrl({});
+      navigator.clipboard.writeText(url).then(function () {
+        copyBtn.textContent = 'copied!'; copyBtn.style.color = '#6dca80';
+        setTimeout(function () { copyBtn.textContent = 'copy'; copyBtn.style.color = '#7ab8f5'; }, 1500);
+      }).catch(function () {
+        copyBtn.textContent = 'failed';
+        setTimeout(function () { copyBtn.textContent = 'copy'; }, 1500);
+      });
+    });
+    updateUrlDisplay();
+    urlBox.appendChild(urlLabel); urlBox.appendChild(urlLinkEl); urlBox.appendChild(copyBtn);
+    panel.appendChild(urlBox);
+
+    document.body.appendChild(panel);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render);
+  else render();
+})();
+</script>
+</body>
+</html>
