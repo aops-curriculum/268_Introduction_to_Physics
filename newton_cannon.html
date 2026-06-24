@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="eigennode-aspect" content="4/3">
+  <title>Newton's Cannon</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body { background: #ffffff; user-select: none; -webkit-user-select: none; }
+    canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+
+// ── Design grid (logical coords used in all drawing code) ─────────────────────
+const W = 800, H = 600;
+
+// ── Physics (normalized units: Earth radius = 1, GM = 1) ──────────────────────
+const EARTH_R   = 1.0;     // Earth radius
+const GM        = 1.0;     // gravitational parameter
+const DEF_TOWER = 0.3;     // default tower height (sim units)
+const BALL_R    = 0.06;    // ball radius (sim units)
+const SPEED_KMS = 9.2;     // km/s per sim velocity unit (matches original GlowScript)
+const DT        = 0.0001;  // physics timestep (sim time)
+
+// ── Display ───────────────────────────────────────────────────────────────────
+const SCALE = 150;         // design pixels per sim unit
+const CX = W / 2;          // Earth center x
+const CY = H / 2;          // Earth center y
+
+// ── URL params ────────────────────────────────────────────────────────────────
+const Q = new URLSearchParams(location.search);
+const num = (k, d) => Q.has(k) && isFinite(+Q.get(k)) ? +Q.get(k) : d;
+
+let simspeed = num('simspeed', 1.0);
+let towerH   = num('tower', DEF_TOWER);
+
+// ── Earth image ───────────────────────────────────────────────────────────────
+const earthImg = new Image();
+earthImg.crossOrigin = 'anonymous';
+earthImg.src = 'earth_newtontower.jpg';
+earthImg.onload = () => draw();
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let bx, by, bvx, bvy;    // ball position and velocity (sim coords)
+let trail = [];
+let landed = false;
+let drag = null;          // { sx, sy, cx, cy } in design coords
+
+function reset() {
+  towerH = num('tower', DEF_TOWER);
+  bx  = 0;
+  by  = EARTH_R + towerH + BALL_R;
+  bvx = 0;
+  bvy = 0;
+  trail  = [];
+  landed = false;
+  drag   = null;
+}
+
+// ── Physics ───────────────────────────────────────────────────────────────────
+function physStep() {
+  const r2 = bx * bx + by * by;
+  const r  = Math.sqrt(r2);
+  if (r <= EARTH_R + 0.001) {
+    bx = (bx / r) * EARTH_R;
+    by = (by / r) * EARTH_R;
+    bvx = 0; bvy = 0;
+    landed = true;
+    return;
+  }
+  const r3 = r2 * r;
+  bvx += -GM * bx / r3 * DT;
+  bvy += -GM * by / r3 * DT;
+  bx  += bvx * DT;
+  by  += bvy * DT;
+}
+
+function update() {
+  if (landed || Math.hypot(bvx, bvy) < 1e-9) return;
+
+  const steps = Math.max(1, Math.round(150 * simspeed));
+  for (let i = 0; i < steps; i++) {
+    physStep();
+    if (landed) break;
+  }
+
+  // Record trail (throttled)
+  const last = trail[trail.length - 1];
+  if (!last || Math.hypot(last[0] - bx, last[1] - by) > 0.008) {
+    trail.push([bx, by]);
+    if (trail.length > 6000) trail.shift();
+  }
+
+  // Freeze if ball escaped too far
+  if (bx * bx + by * by > 36) {
+    bvx = 0; bvy = 0;
+  }
+}
+
+// ── Coordinate helpers ────────────────────────────────────────────────────────
+function s2d(sx, sy) {                          // sim → design
+  return [CX + sx * SCALE, CY - sy * SCALE];
+}
+
+// ── Canvas setup ──────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+
+function fit() {
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  if (!cw || !ch) return;
+  canvas.width  = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
+  ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+  draw();
+}
+new ResizeObserver(fit).observe(canvas);
+
+// ── Draw ──────────────────────────────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // White background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  const ep = EARTH_R * SCALE;   // Earth radius in design pixels
+
+  // ── Earth image clipped to circle ─────────────────────────────────────────
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(CX, CY, ep, 0, Math.PI * 2);
+  ctx.clip();
+
+  if (earthImg.complete && earthImg.naturalWidth > 0) {
+    // Equirectangular map: draw full 360°×180° image sized to fill circle
+    // Image aspect ≈ 2:1, so dW = 2*dH.  Africa center at lon≈20°E → 200/360 across image.
+    const dH = 2 * ep;
+    const dW = dH * (earthImg.naturalWidth / earthImg.naturalHeight);
+    const xf = 200 / 360;   // fraction across image for lon 20°E
+    ctx.drawImage(earthImg, CX - xf * dW, CY - ep, dW, dH);
+  } else {
+    ctx.fillStyle = '#1a5276';
+    ctx.beginPath();
+    ctx.arc(CX, CY, ep, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Sphere-like lighting overlay
+  const lig = ctx.createRadialGradient(CX - ep * 0.35, CY - ep * 0.35, ep * 0.05,
+                                        CX, CY, ep);
+  lig.addColorStop(0,   'rgba(255,255,255,0.18)');
+  lig.addColorStop(0.5, 'rgba(255,255,255,0)');
+  lig.addColorStop(1,   'rgba(0,0,0,0.22)');
+  ctx.fillStyle = lig;
+  ctx.beginPath();
+  ctx.arc(CX, CY, ep, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Earth outline
+  ctx.beginPath();
+  ctx.arc(CX, CY, ep, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(30,60,140,0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // ── Tower ─────────────────────────────────────────────────────────────────
+  const [ttx, tty] = s2d(0, EARTH_R + towerH);
+  ctx.beginPath();
+  ctx.moveTo(CX, CY - ep);
+  ctx.lineTo(ttx, tty);
+  ctx.strokeStyle = '#808080';
+  ctx.lineWidth   = 4;
+  ctx.lineCap     = 'round';
+  ctx.stroke();
+
+  // ── Trail ─────────────────────────────────────────────────────────────────
+  if (trail.length > 1) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(220, 70, 0, 0.78)';
+    ctx.lineWidth   = 1.8;
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
+    ctx.beginPath();
+    let [tx, ty] = s2d(trail[0][0], trail[0][1]);
+    ctx.moveTo(tx, ty);
+    for (let i = 1; i < trail.length; i++) {
+      [tx, ty] = s2d(trail[i][0], trail[i][1]);
+      ctx.lineTo(tx, ty);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── Ball ──────────────────────────────────────────────────────────────────
+  const [bpx, bpy] = s2d(bx, by);
+  const br = Math.max(BALL_R * SCALE, 5);
+
+  // Shadow
+  ctx.beginPath();
+  ctx.arc(bpx + 1.5, bpy + 1.5, br, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(bpx, bpy, br, 0, Math.PI * 2);
+  ctx.fillStyle = '#808080';
+  ctx.fill();
+  ctx.strokeStyle = '#555';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // ── Drag arrow ────────────────────────────────────────────────────────────
+  if (drag) {
+    const { sx, sy, cx, cy } = drag;
+    const dx = sx - cx, dy = sy - cy;
+    const len = Math.hypot(dx, dy);
+    if (len > 5) {
+      ctx.save();
+      ctx.strokeStyle = '#444';
+      ctx.fillStyle   = '#444';
+      ctx.lineWidth   = 2;
+      ctx.lineCap     = 'round';
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(sx, sy);
+      ctx.stroke();
+
+      // Arrowhead at (sx, sy)
+      const ang = Math.atan2(dy, dx);
+      ctx.translate(sx, sy);
+      ctx.rotate(ang);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-14, 5);
+      ctx.lineTo(-14, -5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Speed label near the tail (current mouse pos)
+      const speed = Math.hypot(dx, dy) / SCALE * SPEED_KMS;
+      ctx.save();
+      ctx.font         = 'bold 13px Arial, sans-serif';
+      ctx.fillStyle    = '#222';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(speed.toFixed(2) + ' km/s', cx, cy - 8);
+      ctx.restore();
+    }
+  }
+
+  // ── Instructions (shown when ball is idle) ────────────────────────────────
+  if (Math.hypot(bvx, bvy) < 1e-9 && !drag && !landed) {
+    ctx.save();
+    ctx.font         = '14px Arial, sans-serif';
+    ctx.fillStyle    = '#666';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('Click and drag to launch the ball.  Press R to reset.', W / 2, H - 16);
+    ctx.restore();
+  }
+}
+
+// ── Input helpers ─────────────────────────────────────────────────────────────
+function evXY(e) {
+  const r  = canvas.getBoundingClientRect();
+  const src = e.touches ? e.touches[0] : e;
+  return {
+    cx: (src.clientX - r.left) * W / r.width,
+    cy: (src.clientY - r.top)  * H / r.height,
+  };
+}
+
+// ── Mouse events ──────────────────────────────────────────────────────────────
+canvas.addEventListener('mousedown', e => {
+  const { cx, cy } = evXY(e);
+  drag = { sx: cx, sy: cy, cx, cy };
+  e.preventDefault();
+});
+canvas.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const { cx, cy } = evXY(e);
+  drag.cx = cx; drag.cy = cy;
+});
+canvas.addEventListener('mouseup', e => {
+  if (!drag) return;
+  const { sx, sy, cx, cy } = drag;
+  // Velocity = (start − current) / SCALE; canvas Y is inverted vs sim Y
+  bvx    += (sx - cx) / SCALE;
+  bvy    += -(sy - cy) / SCALE;
+  trail   = [];
+  landed  = false;
+  drag    = null;
+  e.preventDefault();
+});
+canvas.addEventListener('mouseleave', () => { drag = null; });
+
+// ── Touch events ──────────────────────────────────────────────────────────────
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const { cx, cy } = evXY(e);
+  drag = { sx: cx, sy: cy, cx, cy };
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!drag) return;
+  const { cx, cy } = evXY(e);
+  drag.cx = cx; drag.cy = cy;
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (!drag) return;
+  const { sx, sy, cx, cy } = drag;
+  bvx   += (sx - cx) / SCALE;
+  bvy   += -(sy - cy) / SCALE;
+  trail  = [];
+  landed = false;
+  drag   = null;
+}, { passive: false });
+
+// ── Keyboard ──────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'r')  { reset(); return; }
+  if (k === 'u')  { simspeed = Math.min(simspeed * 2, 16); return; }
+  if (k === 'i')  { simspeed = Math.max(simspeed / 2, 0.0625); return; }
+});
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
+reset();
+fit();
+
+(function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+})();
+</script>
+
+<!-- ── CHEAT PANEL (visible only when ?cheat=1) ──────────────────────────────── -->
+<script>
+(function () {
+  'use strict';
+  var _cpQ = new URLSearchParams(location.search);
+  if (_cpQ.get('cheat') !== '1') return;
+
+  var CHEAT_DEFS = [
+    { name: 'simspeed', type: 'number', min: 0.1, max: 16,  step: 0.1,  default: 1,   desc: 'Simulation speed multiplier (U / I keys also adjust)' },
+    { name: 'tower',    type: 'number', min: 0.05, max: 2,  step: 0.05, default: 0.3, desc: 'Tower height above Earth surface (sim units)' },
+  ];
+  var EMBED_KEYS = ['cheat'];
+
+  function buildCleanUrl(ov) {
+    var p = new URLSearchParams(location.search);
+    EMBED_KEYS.forEach(function (k) { p.delete(k); });
+    for (var k in ov) { var v = ov[k]; if (v === null || v === '') p.delete(k); else p.set(k, v); }
+    var qs = p.toString();
+    return location.origin + location.pathname + (qs ? '?' + qs : '');
+  }
+  function buildCheatUrl(ov) {
+    var b = buildCleanUrl(ov);
+    return b + (b.indexOf('?') >= 0 ? '&' : '?') + 'cheat=1';
+  }
+
+  var urlLinkEl = null;
+  function updateUrlDisplay() {
+    if (!urlLinkEl) return;
+    var u = buildCleanUrl({});
+    urlLinkEl.href = u; urlLinkEl.textContent = u;
+  }
+  function getEffective(def) {
+    var raw = _cpQ.get(def.name);
+    return raw !== null ? raw : (def['default'] !== undefined ? String(def['default']) : '');
+  }
+  function isTruthy(v) { return v !== '0' && v !== 'false' && v !== 'no' && v !== 'off' && v !== ''; }
+
+  function makeControl(def) {
+    var eff = getEffective(def);
+    if (def.type === 'toggle') {
+      var on = isTruthy(eff);
+      var btn = document.createElement('button');
+      btn.textContent = on ? '1 (on)' : '0 (off)';
+      btn.style.cssText = 'background:' + (on ? '#1b3d1b' : '#3d1b1b') + ';color:' + (on ? '#6dca80' : '#e07070') +
+        ';border:1px solid ' + (on ? '#2a7a3a' : '#8a2a2a') + ';border-radius:3px;padding:3px 10px;cursor:pointer;font-size:12px;font-family:inherit;min-width:70px';
+      btn.addEventListener('click', function () { var u = {}; u[def.name] = on ? '0' : '1'; window.location.href = buildCheatUrl(u); });
+      return btn;
+    }
+    if (def.type === 'select') {
+      var sel = document.createElement('select');
+      sel.style.cssText = 'background:#0d1b2a;color:#c8d8e8;border:1px solid #2a3f5f;border-radius:3px;padding:3px 8px;font-size:12px;font-family:inherit;cursor:pointer';
+      def.values.forEach(function (v) { var opt = document.createElement('option'); opt.value = v; opt.textContent = v; if (eff === String(v)) opt.selected = true; sel.appendChild(opt); });
+      sel.addEventListener('change', function () { var u = {}; u[def.name] = sel.value; window.location.href = buildCheatUrl(u); });
+      return sel;
+    }
+    if (def.type === 'number') {
+      var inp = document.createElement('input');
+      inp.type = 'number'; inp.value = eff;
+      if (def.min !== undefined) inp.min = String(def.min);
+      if (def.max !== undefined) inp.max = String(def.max);
+      if (def.step !== undefined) inp.step = String(def.step);
+      inp.style.cssText = 'background:#0d1b2a;color:#c8d8e8;border:1px solid #2a3f5f;border-radius:3px;padding:3px 6px;width:90px;font-size:12px;font-family:inherit';
+      inp.addEventListener('change', function () { var u = {}; u[def.name] = inp.value; window.location.href = buildCheatUrl(u); });
+      return inp;
+    }
+    var inp2 = document.createElement('input'); inp2.type = 'text'; inp2.value = eff;
+    inp2.style.cssText = 'background:#0d1b2a;color:#c8d8e8;border:1px solid #2a3f5f;border-radius:3px;padding:3px 6px;width:220px;font-size:12px;font-family:inherit';
+    inp2.addEventListener('change', function () { var u = {}; u[def.name] = inp2.value; window.location.href = buildCheatUrl(u); });
+    return inp2;
+  }
+  function typeLabel(def) {
+    if (def.type === 'toggle') return '0 | 1';
+    if (def.type === 'select') return def.values.join(' | ');
+    if (def.type === 'number') {
+      if (def.min !== undefined && def.max !== undefined) return def.min + '–' + def.max;
+      if (def.min !== undefined) return '≥' + def.min;
+      if (def.max !== undefined) return '≤' + def.max;
+      return 'number';
+    }
+    return 'text';
+  }
+
+  function render() {
+    var panel = document.createElement('div');
+    panel.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:rgba(12,18,32,0.97);color:#c8d8e8;font-family:"Segoe UI",system-ui,monospace;font-size:13px;border-top:2px solid #3a7bd5;z-index:2147483647;max-height:48vh;overflow-y:auto;padding:10px 16px 14px;box-sizing:border-box;box-shadow:0 -4px 24px rgba(0,0,0,0.6)';
+
+    var title = document.createElement('div');
+    title.style.cssText = 'font-weight:bold;font-size:13px;color:#7ab8f5;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between';
+    var span = document.createElement('span');
+    span.textContent = '🔑 Cheat Panel — ' + location.pathname.split('/').pop();
+    var xBtn = document.createElement('button');
+    xBtn.textContent = '×'; xBtn.title = 'Close';
+    xBtn.style.cssText = 'background:none;border:none;color:#7ab8f5;font-size:18px;cursor:pointer;padding:0 4px;line-height:1';
+    xBtn.addEventListener('click', function () { panel.remove(); });
+    title.appendChild(span); title.appendChild(xBtn);
+    panel.appendChild(title);
+
+    var table = document.createElement('table');
+    table.style.cssText = 'border-collapse:collapse;width:100%;margin-bottom:10px';
+    var thead = table.createTHead(); var hrow = thead.insertRow();
+    ['Parameter', 'Type / Values', 'Control', 'Description'].forEach(function (h) {
+      var th = document.createElement('th'); th.textContent = h;
+      th.style.cssText = 'text-align:left;padding:4px 10px;border-bottom:1px solid #1e3050;color:#5a8fc0;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap';
+      hrow.appendChild(th);
+    });
+    var tbody = table.createTBody();
+    CHEAT_DEFS.forEach(function (def) {
+      var row = tbody.insertRow();
+      var isSet = _cpQ.has(def.name);
+      row.style.cssText = 'border-bottom:1px solid #131f30;' + (isSet ? 'background:rgba(58,123,213,0.08)' : '');
+      var nc = row.insertCell(); nc.style.cssText = 'padding:5px 10px;font-weight:bold;font-size:12px;color:' + (isSet ? '#a8d4ff' : '#7fa8d0') + ';white-space:nowrap;font-family:monospace'; nc.textContent = def.name;
+      var tc = row.insertCell(); tc.style.cssText = 'padding:5px 10px;color:#5a7a90;font-size:11px;max-width:200px;font-family:monospace'; tc.textContent = typeLabel(def);
+      var cc = row.insertCell(); cc.style.cssText = 'padding:4px 10px;white-space:nowrap'; cc.appendChild(makeControl(def));
+      var dc = row.insertCell(); dc.style.cssText = 'padding:5px 10px;color:#8aa0b0;font-size:12px'; dc.textContent = (def.desc || '') + (def['default'] !== undefined ? ' (default: ' + def['default'] + ')' : '');
+    });
+    panel.appendChild(table);
+
+    var urlBox = document.createElement('div');
+    urlBox.style.cssText = 'background:#080d1a;border:1px solid #1e3050;border-radius:4px;padding:7px 12px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap';
+    var urlLabel = document.createElement('span');
+    urlLabel.style.cssText = 'color:#5a8fc0;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap;flex-shrink:0';
+    urlLabel.textContent = 'URL:';
+    urlLinkEl = document.createElement('a');
+    urlLinkEl.style.cssText = 'color:#5fba7d;word-break:break-all;font-size:12px;font-family:monospace;text-decoration:none';
+    urlLinkEl.addEventListener('click', function (e) { e.preventDefault(); window.location.href = buildCheatUrl({}); });
+    var copyBtn = document.createElement('button');
+    copyBtn.textContent = 'copy';
+    copyBtn.style.cssText = 'background:#1a3050;color:#7ab8f5;border:1px solid #2a4a70;border-radius:3px;padding:2px 8px;font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-left:4px';
+    copyBtn.addEventListener('click', function () {
+      var url = urlLinkEl ? urlLinkEl.href : buildCleanUrl({});
+      navigator.clipboard.writeText(url).then(function () {
+        copyBtn.textContent = 'copied!'; copyBtn.style.color = '#6dca80';
+        setTimeout(function () { copyBtn.textContent = 'copy'; copyBtn.style.color = '#7ab8f5'; }, 1500);
+      }).catch(function () { copyBtn.textContent = 'failed'; setTimeout(function () { copyBtn.textContent = 'copy'; }, 1500); });
+    });
+    updateUrlDisplay();
+    urlBox.appendChild(urlLabel); urlBox.appendChild(urlLinkEl); urlBox.appendChild(copyBtn);
+    panel.appendChild(urlBox);
+    document.body.appendChild(panel);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render);
+  else render();
+})();
+</script>
+</body>
+</html>
