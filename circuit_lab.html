@@ -13,6 +13,13 @@
       &switch=open|closed  initial switch state for bulb_circuit (default closed)
       &labels=1            show part name labels (default 0)
       &values=1            show part values, e.g. "9.0 V", "10 Ω" (default 0)
+      &wire=0           hide Wire from parts tray (default shown)
+      &battery=0        hide Battery from parts tray (default shown)
+      &bulb=0           hide Bulb from parts tray (default shown)
+      &sw=0             hide Switch from parts tray (default shown)
+      &resistor=0       hide Resistor from parts tray (default shown)
+      &ammeter=0        hide Ammeter from parts tray (default shown)
+      &voltmeter=0      hide Voltmeter from parts tray (default shown)
       &zoom=1              enable zoom/pan overlay (default 0)
       &cheat=1             open the teacher configuration panel
     Physics: bulb fixed at 10 Ω (ohmic) so I = U/10 — e.g. 120.0 V -> 12.00 A,
@@ -739,6 +746,10 @@
       { type: 'volt',     label: 'Voltmeter' },
     ];
     const SLOT_H = 58, SLOT_Y0 = 26;
+    const trayItems = TRAY_ITEMS.filter(item => {
+      const param = item.type === 'volt' ? 'voltmeter' : item.type;
+      return Q[param] !== '0';
+    });
     const FAKES = {};
     for (const t of Object.keys(DEFS)) {
       FAKES[t] = { type: t, I: 0, volts: 9, ohms: 10, closed: false, lev: -0.6, eoff: 0 };
@@ -751,7 +762,7 @@
       ctx.fillStyle = '#56657a';
       ctx.font = 'bold 12px Segoe UI'; ctx.textAlign = 'center';
       ctx.fillText('Parts', TRAY_W / 2, 16);
-      TRAY_ITEMS.forEach((item, i) => {
+      trayItems.forEach((item, i) => {
         const cy = SLOT_Y0 + i * SLOT_H + 20;
         if (item.type === 'volt') {
           ctx.save();
@@ -784,8 +795,8 @@
     function trayAt(x, y) {
       if (x >= TRAY_W || y < SLOT_Y0) return null;
       const i = Math.floor((y - SLOT_Y0) / SLOT_H);
-      if (i < 0 || i >= TRAY_ITEMS.length) return null;
-      return TRAY_ITEMS[i].type;
+      if (i < 0 || i >= trayItems.length) return null;
+      return trayItems[i].type;
     }
 
     // ── Hit tests ────────────────────────────────────────────
@@ -1219,7 +1230,14 @@
     {name:'switch',  type:'select', values:['closed','open'],        'default':'closed',  desc:'Initial switch state (bulb_circuit only)'},
     {name:'labels',  type:'toggle',                                  'default':0,         desc:'Show part name labels'},
     {name:'values',  type:'toggle',                                  'default':0,         desc:'Show part values (e.g. "9.0 V")'},
-    {name:'zoom',    type:'toggle',                                  'default':0,         desc:'Enable zoom/pan overlay'},
+    {name:'zoom',      type:'toggle', 'default':0, desc:'Enable zoom/pan overlay'},
+    {name:'wire',      type:'toggle', 'default':1, desc:'Show Wire in parts tray'},
+    {name:'battery',   type:'toggle', 'default':1, desc:'Show Battery in parts tray'},
+    {name:'bulb',      type:'toggle', 'default':1, desc:'Show Light Bulb in parts tray'},
+    {name:'sw',        type:'toggle', 'default':1, desc:'Show Switch in parts tray'},
+    {name:'resistor',  type:'toggle', 'default':1, desc:'Show Resistor in parts tray'},
+    {name:'ammeter',   type:'toggle', 'default':1, desc:'Show Ammeter in parts tray'},
+    {name:'voltmeter', type:'toggle', 'default':1, desc:'Show Voltmeter in parts tray'},
   ];
   var EMBED_KEYS = ['cheat'];
 
