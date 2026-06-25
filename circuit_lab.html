@@ -13,6 +13,8 @@
       &switch=open|closed  initial switch state for bulb_circuit (default closed)
       &labels=1            show part name labels (default 0)
       &values=1            show part values, e.g. "9.0 V", "10 Ω" (default 0)
+      &zoom=1              enable zoom/pan overlay (default 0)
+      &cheat=1             open the teacher configuration panel
     Physics: bulb fixed at 10 Ω (ohmic) so I = U/10 — e.g. 120.0 V -> 12.00 A,
     9.0 V -> 0.90 A. Wires are 1e-6 Ω regardless of length; battery internal
     resistance 1e-4 Ω; fire when a part carries more than 15 A.
@@ -21,9 +23,16 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; overflow: hidden; }
     body {
-      background: #f5f5f5; position: relative;
+      background: #f5f5f5;
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none; -webkit-user-select: none;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #stage {
+      position: relative;
+      aspect-ratio: 160/91;
+      height: min(100%, 56.875vw);
+      width: auto;
     }
     canvas { display: block; width: 100%; height: 100%; touch-action: none; }
     #resetBtn {
@@ -61,9 +70,11 @@
   </style>
 </head>
 <body>
-  <canvas id="c"></canvas>
-  <button id="resetBtn">&#8634; Reset</button>
-  <div id="pop"></div>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <button id="resetBtn">&#8634; Reset</button>
+    <div id="pop"></div>
+  </div>
   <script>
   (() => {
     'use strict';
@@ -158,7 +169,7 @@
       div.addEventListener('pointerdown', e => e.stopPropagation());
       div.appendChild(sl);
       div.appendChild(lb);
-      document.body.appendChild(div);
+      document.getElementById('stage').appendChild(div);
       p._sliderDiv = div;
       p._sliderIn  = sl;
       p._sliderLb  = lb;
@@ -1195,7 +1206,178 @@
     init();
     requestAnimationFrame(frame);
   })();
-  </script><!-- @include shared/zoom-overlay.js -->
+  </script>
+<!-- CHEAT PANEL — visible only when ?cheat=1 is in the URL -->
+<script>
+(function () {
+  var _cpQ = new URLSearchParams(location.search);
+  if (_cpQ.get('cheat') !== '1') return;
+
+  var CHEAT_DEFS = [
+    {name:'preset',  type:'select', values:['blank','bulb_circuit'], 'default':'blank',   desc:'Initial circuit layout'},
+    {name:'volts',   type:'number', min:0, max:120, step:0.5,        'default':9,         desc:'Battery voltage (bulb_circuit preset)'},
+    {name:'switch',  type:'select', values:['closed','open'],        'default':'closed',  desc:'Initial switch state (bulb_circuit only)'},
+    {name:'labels',  type:'toggle',                                  'default':0,         desc:'Show part name labels'},
+    {name:'values',  type:'toggle',                                  'default':0,         desc:'Show part values (e.g. "9.0 V")'},
+    {name:'zoom',    type:'toggle',                                  'default':0,         desc:'Enable zoom/pan overlay'},
+  ];
+  var EMBED_KEYS = ['cheat'];
+
+  function buildCleanUrl(ov) {
+    var p = new URLSearchParams(location.search);
+    EMBED_KEYS.forEach(function(k) { p.delete(k); });
+    for (var k in ov) { var v = ov[k]; if (v === null || v === '') p.delete(k); else p.set(k, v); }
+    var qs = p.toString();
+    return location.origin + location.pathname + (qs ? '?' + qs : '');
+  }
+  function buildCheatUrl(ov) {
+    var b = buildCleanUrl(ov);
+    return b + (b.indexOf('?') >= 0 ? '&' : '?') + 'cheat=1';
+  }
+  function getEff(d) {
+    var r = _cpQ.get(d.name);
+    return r !== null ? r : (d['default'] !== undefined ? String(d['default']) : '');
+  }
+  function isTruthy(v) { return v !== '0' && v !== 'false' && v !== 'no' && v !== 'off' && v !== ''; }
+
+  function makeControl(d) {
+    var eff = getEff(d);
+    if (d.type === 'toggle') {
+      var on = isTruthy(eff), btn = document.createElement('button');
+      btn.textContent = on ? '1 (on)' : '0 (off)';
+      btn.style.cssText = 'background:' + (on ? '#1b3d1b' : '#3d1b1b') + ';color:' + (on ? '#6dca80' : '#e07070') +
+        ';border:1px solid ' + (on ? '#2a7a3a' : '#8a2a2a') + ';border-radius:3px;padding:3px 10px;' +
+        'cursor:pointer;font-size:12px;min-width:70px';
+      btn.onclick = function() { var u = {}; u[d.name] = on ? '0' : '1'; location.href = buildCheatUrl(u); };
+      return btn;
+    }
+    if (d.type === 'select') {
+      var sel = document.createElement('select');
+      sel.style.cssText = 'background:#0d1b2a;color:#c8d8e8;border:1px solid #2a3f5f;' +
+        'border-radius:3px;padding:3px 8px;font-size:12px;cursor:pointer';
+      d.values.forEach(function(v) {
+        var o = document.createElement('option'); o.value = v; o.textContent = v;
+        if (eff === String(v)) o.selected = true; sel.appendChild(o);
+      });
+      sel.onchange = function() { var u = {}; u[d.name] = sel.value; location.href = buildCheatUrl(u); };
+      return sel;
+    }
+    var inp = document.createElement('input');
+    inp.type = 'number'; inp.value = eff;
+    if (d.min !== undefined) inp.min = String(d.min);
+    if (d.max !== undefined) inp.max = String(d.max);
+    if (d.step !== undefined) inp.step = String(d.step);
+    inp.style.cssText = 'background:#0d1b2a;color:#c8d8e8;border:1px solid #2a3f5f;' +
+      'border-radius:3px;padding:3px 6px;width:90px;font-size:12px';
+    inp.onchange = function() { var u = {}; u[d.name] = inp.value; location.href = buildCheatUrl(u); };
+    return inp;
+  }
+
+  function typeLabel(d) {
+    if (d.type === 'toggle') return '0|1';
+    if (d.type === 'select') return d.values.join('|');
+    if (d.type === 'number' && d.min !== undefined && d.max !== undefined) return d.min + '–' + d.max;
+    return d.type;
+  }
+
+  function render() {
+    var panel = document.createElement('div');
+    panel.style.cssText = 'position:fixed;bottom:0;left:0;right:0;' +
+      'background:rgba(12,18,32,0.97);color:#c8d8e8;' +
+      'font-family:"Segoe UI",system-ui,monospace;font-size:13px;' +
+      'border-top:2px solid #3a7bd5;z-index:2147483647;max-height:48vh;overflow-y:auto;' +
+      'padding:10px 16px 14px;box-sizing:border-box;box-shadow:0 -4px 24px rgba(0,0,0,0.6)';
+
+    var bubble = document.createElement('button');
+    bubble.style.cssText = 'position:fixed;bottom:8px;right:12px;' +
+      'background:rgba(12,18,32,0.95);color:#7ab8f5;border:1px solid #3a7bd5;' +
+      'border-radius:4px;padding:4px 12px;font-size:12px;' +
+      'font-family:"Segoe UI",system-ui,monospace;cursor:pointer;' +
+      'z-index:2147483647;display:none;box-shadow:0 2px 8px rgba(0,0,0,0.5);user-select:none';
+    bubble.textContent = 'Cheat Panel';
+    bubble.onclick = function() { bubble.style.display = 'none'; panel.style.display = ''; };
+    document.body.appendChild(bubble);
+
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'font-weight:bold;color:#7ab8f5;margin-bottom:8px;' +
+      'display:flex;align-items:center;justify-content:space-between';
+    var hspan = document.createElement('span');
+    hspan.textContent = 'Cheat Panel — ' + location.pathname.split('/').pop();
+    var btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;align-items:center;gap:2px';
+    var minbtn = document.createElement('button');
+    minbtn.textContent = '−';
+    minbtn.title = 'Minimize';
+    minbtn.style.cssText = 'background:none;border:none;color:#7ab8f5;font-size:18px;cursor:pointer;padding:0 4px;line-height:1';
+    minbtn.onclick = function() { panel.style.display = 'none'; bubble.style.display = ''; };
+    var xbtn = document.createElement('button');
+    xbtn.textContent = '×'; xbtn.title = 'Close';
+    xbtn.style.cssText = 'background:none;border:none;color:#7ab8f5;font-size:18px;cursor:pointer;padding:0 4px;line-height:1';
+    xbtn.onclick = function() { panel.remove(); bubble.remove(); };
+    btns.appendChild(minbtn); btns.appendChild(xbtn);
+    hdr.appendChild(hspan); hdr.appendChild(btns); panel.appendChild(hdr);
+
+    var tbl = document.createElement('table');
+    tbl.style.cssText = 'border-collapse:collapse;width:100%;margin-bottom:10px';
+    var hrow = tbl.createTHead().insertRow();
+    ['Parameter', 'Type/Values', 'Control', 'Description'].forEach(function(h) {
+      var th = document.createElement('th');
+      th.textContent = h;
+      th.style.cssText = 'text-align:left;padding:4px 10px;border-bottom:1px solid #1e3050;' +
+        'color:#5a8fc0;font-size:11px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap';
+      hrow.appendChild(th);
+    });
+    var tbody = tbl.createTBody();
+    CHEAT_DEFS.forEach(function(d) {
+      var row = tbody.insertRow(), isSet = _cpQ.has(d.name);
+      row.style.cssText = 'border-bottom:1px solid #131f30;' +
+        (isSet ? 'background:rgba(58,123,213,0.08)' : '');
+      var nc = row.insertCell();
+      nc.style.cssText = 'padding:5px 10px;font-weight:bold;font-size:12px;' +
+        'color:' + (isSet ? '#a8d4ff' : '#7fa8d0') + ';white-space:nowrap;font-family:monospace';
+      nc.textContent = d.name;
+      var tc = row.insertCell();
+      tc.style.cssText = 'padding:5px 10px;color:#5a7a90;font-size:11px;font-family:monospace';
+      tc.textContent = typeLabel(d);
+      var cc = row.insertCell();
+      cc.style.cssText = 'padding:4px 10px;white-space:nowrap';
+      cc.appendChild(makeControl(d));
+      var dc = row.insertCell();
+      dc.style.cssText = 'padding:5px 10px;color:#8aa0b0;font-size:12px';
+      dc.textContent = (d.desc || '') + (d['default'] !== undefined ? ' (default: ' + d['default'] + ')' : '');
+    });
+    panel.appendChild(tbl);
+
+    var urlBox = document.createElement('div');
+    urlBox.style.cssText = 'background:#080d1a;border:1px solid #1e3050;border-radius:4px;' +
+      'padding:7px 12px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap';
+    var ulbl = document.createElement('span');
+    ulbl.style.cssText = 'color:#5a8fc0;font-size:11px;text-transform:uppercase;' +
+      'letter-spacing:.06em;white-space:nowrap;flex-shrink:0';
+    ulbl.textContent = 'Embed URL:';
+    var ulink = document.createElement('a');
+    ulink.style.cssText = 'color:#5fba7d;word-break:break-all;font-size:12px;' +
+      'font-family:monospace;text-decoration:none';
+    ulink.href = buildCleanUrl({}); ulink.textContent = buildCleanUrl({});
+    ulink.onclick = function(e) { e.preventDefault(); location.href = buildCheatUrl({}); };
+    var cpybtn = document.createElement('button');
+    cpybtn.textContent = 'copy';
+    cpybtn.style.cssText = 'background:#1a3050;color:#7ab8f5;border:1px solid #2a4a70;' +
+      'border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer;' +
+      'white-space:nowrap;flex-shrink:0;margin-left:4px';
+    cpybtn.onclick = function() {
+      navigator.clipboard && navigator.clipboard.writeText(buildCleanUrl({}));
+      cpybtn.textContent = '✓ copied';
+      setTimeout(function() { cpybtn.textContent = 'copy'; }, 1500);
+    };
+    urlBox.appendChild(ulbl); urlBox.appendChild(ulink); urlBox.appendChild(cpybtn);
+    panel.appendChild(urlBox);
+    document.body.appendChild(panel);
+  }
+  render();
+})();
+</script>
+<!-- @include shared/zoom-overlay.js -->
 <script>
 (function () {
   /* Zoom/pan overlay — activated by ?zoom=1, hidden by default (?zoom=0 or absent). */
