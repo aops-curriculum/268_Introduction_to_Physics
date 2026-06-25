@@ -7,8 +7,11 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; }
-    body { background: #ffffff; user-select: none; -webkit-user-select: none; }
-    canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+    body {
+      display: flex; align-items: center; justify-content: center;
+      background: #ffffff; user-select: none; -webkit-user-select: none;
+    }
+    canvas { display: block; aspect-ratio: 4/3; height: min(100%, 75vw); width: auto; cursor: crosshair; touch-action: none; }
   </style>
 </head>
 <body>
