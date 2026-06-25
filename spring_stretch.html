@@ -71,7 +71,7 @@
     return isFinite(v) ? Math.min(K_MAX, Math.max(K_MIN, v)) : K_DEFAULT;
   };
   const K1_INIT = parseK('k1');
-  const _zoomMode = qs.get('zoom') === 'true';
+  const _zoomMode = qs.has('zoom') && qs.get('zoom') !== '0';
 
   // ── Scene objects ───────────────────────────────────────────────────────
   const springs = [
