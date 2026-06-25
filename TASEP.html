@@ -87,7 +87,11 @@
 
   const Q = new URLSearchParams(location.search);
   const num = (k, d) => Q.has(k) && isFinite(+Q.get(k)) ? +Q.get(k) : d;
-  const avgWindow = Math.max(1, Math.round(num('avg_window', 100)));
+  const avgWindow  = Math.max(1, Math.round(num('avg_window', 100)));
+  const fixedCells = num('fixed_cells', 0);
+  const fixedAlpha = num('fixed_alpha', 0);
+  const fixedBeta  = num('fixed_beta',  0);
+  const fixedSpeed = num('fixed_speed', 0);
 
   const MAXW = 800;
 
@@ -266,6 +270,11 @@
   if (Q.has('beta'))  betaSlider.value  = String(num('beta', 0.30));
   if (Q.has('speed')) speedSlider.value = String(num('speed', 81));
 
+  if (fixedCells) { cellsSlider.value = String(fixedCells); cellsSlider.style.display = 'none'; }
+  if (fixedAlpha) { alphaSlider.value = String(fixedAlpha); alphaSlider.style.display = 'none'; }
+  if (fixedBeta)  { betaSlider.value  = String(fixedBeta);  betaSlider.style.display  = 'none'; }
+  if (fixedSpeed) { speedSlider.value = String(fixedSpeed); speedSlider.style.display = 'none'; }
+
   numCells = parseInt(cellsSlider.value);
   layout();
   initSim();
@@ -375,7 +384,11 @@
     {name:'alpha',      type:'number', min:0,   max:1,     step:0.02, default:0.20, desc:'Entry rate α (probability per timestep)'},
     {name:'beta',       type:'number', min:0,   max:1,     step:0.02, default:0.30, desc:'Exit rate β (probability per timestep)'},
     {name:'speed',      type:'number', min:0,   max:1000,  step:1,    default:81,   desc:'Speed slider position (0–1000, logarithmic)'},
-    {name:'avg_window', type:'number', min:1,   max:10000, step:1,    default:100,  desc:'Density average window (number of timesteps)'},
+    {name:'avg_window',  type:'number', min:1,   max:10000, step:1,    default:100,  desc:'Density average window (number of timesteps)'},
+    {name:'fixed_cells', type:'number', min:0,   max:500,   step:5,    default:0,    desc:'Fix cell count and hide slider (0 = use slider)'},
+    {name:'fixed_alpha', type:'number', min:0,   max:1,     step:0.02, default:0,    desc:'Fix α and hide slider (0 = use slider)'},
+    {name:'fixed_beta',  type:'number', min:0,   max:1,     step:0.02, default:0,    desc:'Fix β and hide slider (0 = use slider)'},
+    {name:'fixed_speed', type:'number', min:0,   max:1000,  step:1,    default:0,    desc:'Fix speed slider position and hide slider (0 = use slider)'},
   ];
   var EMBED_KEYS = ['cheat'];
   function buildCleanUrl(ov) {
