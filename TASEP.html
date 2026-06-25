@@ -220,9 +220,14 @@
   // steps between frames, and per-step textContent writes were a real bottleneck
   // at high speed. Only the latest state is ever drawn, so intermediate steps are
   // computed but never rendered — i.e. "draw every Nth state" is automatic.
-  function updateStats() {
-    const avgFilled = densityBufCount > 0 ? densityBufSum / (densityBufCount * numCells) : 0;
-    filledLabel.textContent = 'fraction of cells filled: ' + avgFilled.toFixed(3);
+  // filledLabel is throttled to 10 Hz to keep it readable.
+  let lastFilledUpdate = 0;
+  function updateStats(now) {
+    if (now - lastFilledUpdate >= 100) {
+      const avgFilled = densityBufCount > 0 ? densityBufSum / (densityBufCount * numCells) : 0;
+      filledLabel.textContent = 'fraction of cells filled: ' + avgFilled.toFixed(3);
+      lastFilledUpdate = now;
+    }
     if (runningFluxCount > 0)
       fluxLabel.textContent = 'long term average flux: ' + (runningFlux / runningFluxCount).toFixed(4);
   }
@@ -248,7 +253,7 @@
       // than freezing or accumulating an unbounded backlog.
       if ((ran & 63) === 0 && performance.now() - start > 8) { lastStepTime = now; break; }
     }
-    if (ran) updateStats();
+    if (ran) updateStats(now);
     draw();
   }
 
