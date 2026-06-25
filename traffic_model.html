@@ -106,19 +106,22 @@
   const BUTTONS = bool('buttons', preset.buttons);
   const clampI  = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)));
   const clampF  = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const MAX_SPEED = clampI(num('maxspeed', 200), 1, 10000);
+  const MAX_CARS  = clampI(num('maxcars',   80), 1, 500);
+  const MAX_CELLS = clampI(num('maxcells', 200), 2, 1000);
 
   // ── Control definitions ────────────────────────────────────────────────
   const CTRLS = [
-    { key: 'cars',  label: 'cars',      min: 1,  max: 80,  step: 1,    reset: true,  fmt: v => String(v | 0) },
-    { key: 'cells', label: 'cells',     min: 10, max: 200, step: 1,    reset: true,  fmt: v => String(v | 0) },
-    { key: 'p',     label: 'p',         min: 0,  max: 1,   step: 0.01, reset: false, fmt: v => v.toFixed(2) },
-    { key: 'speed', label: 'sim speed', min: 1,  max: 20,  step: 1,    reset: false, fmt: v => String(v | 0) },
+    { key: 'cars',  label: 'cars',      min: 1,  max: MAX_CARS,  step: 1,    reset: true,  fmt: v => String(v | 0) },
+    { key: 'cells', label: 'cells',     min: 10, max: MAX_CELLS, step: 1,    reset: true,  fmt: v => String(v | 0) },
+    { key: 'p',     label: 'p',         min: 0,  max: 1,         step: 0.01, reset: false, fmt: v => v.toFixed(2) },
+    { key: 'speed', label: 'sim speed', min: 1,  max: MAX_SPEED, step: 1,    reset: false, fmt: v => String(v | 0) },
   ];
   const values = {
-    cars:  clampI(num('cars',  preset.cars),  1,  80),
-    cells: clampI(num('cells', preset.cells), 10, 200),
+    cars:  clampI(num('cars',  preset.cars),  1,  MAX_CARS),
+    cells: clampI(num('cells', preset.cells), 10, MAX_CELLS),
     p:     clampF(num('p',     preset.p),     0,  1),
-    speed: clampI(num('speed', preset.speed), 1,  20),
+    speed: clampI(num('speed', preset.speed), 1,  MAX_SPEED),
   };
 
   // ── Build the compact control panel ────────────────────────────────────
@@ -318,16 +321,19 @@
   if (_cpQ.get('cheat') !== '1') return;
 
   var CHEAT_DEFS = [
-    { name: 'preset',  type: 'select', values: ['basic', 'speed', 'running'], default: 'basic',
+    { name: 'preset',   type: 'select', values: ['basic', 'speed', 'running'], default: 'basic',
       desc: 'Bundle of defaults (basic=traffic, speed=trafficspeed, running=trafficrunningspeed)' },
-    { name: 'stats',   type: 'select', values: ['none', 'live', 'longterm'], default: 'none',
+    { name: 'stats',    type: 'select', values: ['none', 'live', 'longterm'], default: 'none',
       desc: 'Readout: none, live average speed, or long-term running average' },
-    { name: 'buttons', type: 'toggle', default: 0, desc: 'Show +/- step buttons on the sliders' },
-    { name: 'cars',    type: 'number', min: 1,  max: 80,  step: 1,    default: 10,  desc: 'Number of cars' },
-    { name: 'cells',   type: 'number', min: 10, max: 200, step: 5,    default: 40,  desc: 'Number of road cells' },
-    { name: 'p',       type: 'number', min: 0,  max: 1,   step: 0.05, default: 0.10, desc: 'Random brake probability p' },
-    { name: 'speed',   type: 'number', min: 1,  max: 20,  step: 1,    default: 2,   desc: 'Simulation speed (steps/sec scale)' }
-  {name:'zoom', type:'toggle', default:0, desc:'Enable zoom/pan controls'},
+    { name: 'buttons',  type: 'toggle', default: 0,    desc: 'Show +/- step buttons on the sliders' },
+    { name: 'maxcars',  type: 'number', min: 1,   max: 500,   step: 1,    default: 80,   desc: 'Max value of the cars slider' },
+    { name: 'maxcells', type: 'number', min: 2,   max: 1000,  step: 1,    default: 200,  desc: 'Max value of the cells slider' },
+    { name: 'maxspeed', type: 'number', min: 1,   max: 10000, step: 1,    default: 200,  desc: 'Max value of the sim speed slider (~3600 is the frame-rate cap)' },
+    { name: 'cars',     type: 'number', min: 1,   max: 500,   step: 1,    default: 10,   desc: 'Initial number of cars (capped by maxcars)' },
+    { name: 'cells',    type: 'number', min: 10,  max: 1000,  step: 5,    default: 40,   desc: 'Initial number of road cells (capped by maxcells)' },
+    { name: 'p',        type: 'number', min: 0,   max: 1,     step: 0.05, default: 0.10, desc: 'Random brake probability p' },
+    { name: 'speed',    type: 'number', min: 1,   max: 10000, step: 1,    default: 2,    desc: 'Initial sim speed (capped by maxspeed)' },
+    { name: 'zoom',     type: 'toggle', default: 0,    desc: 'Enable zoom/pan controls' },
   ];
 
   var EMBED_KEYS = ['cheat'];
