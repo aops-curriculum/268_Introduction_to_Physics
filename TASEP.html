@@ -33,7 +33,7 @@
     <span id="betaLabel">β: 0.30</span>
   </div>
   <div class="ctrl-row">
-    <input type="range" id="speedSlider" min="1" max="300" step="1" value="2">
+    <input type="range" id="speedSlider" min="0" max="1000" step="1" value="81">
     <span id="speedLabel">simulation speed: 2</span>
   </div>
   <div class="stat" id="fluxLabel">long term average flux: will show here after running at least 100 time steps</div>
@@ -103,7 +103,7 @@
   let W, cellW, cellH, dpr;
   let numCells, alpha, beta;
   let occupied = [];
-  let minTimesteps, timesteps, runningFlux, runningFluxCount;
+  let minTimesteps, timesteps, runningFlux, runningFluxCount, filledCount;
 
   function layout() {
     W     = Math.min(window.innerWidth || MAXW, MAXW);
@@ -125,6 +125,7 @@
     timesteps    = 0;
     runningFlux  = 0;
     runningFluxCount = 0;
+    filledCount  = 0;
     occupied     = new Array(numCells).fill(false);
     cellsLabel.textContent = 'cells: ' + numCells;
     alphaLabel.textContent = 'α: ' + alpha.toFixed(2);
@@ -143,22 +144,21 @@
       }
     }
 
-    if (Math.random() < alpha && !occupied[0]) occupied[0] = true;
+    if (Math.random() < alpha && !occupied[0]) { occupied[0] = true; filledCount++; }
 
     let left = false;
     if (Math.random() < beta && occupied[numCells - 1]) {
       occupied[numCells - 1] = false;
+      filledCount--;
       left = true;
     }
 
-    const filledCount = occupied.reduce((s, v) => s + (v ? 1 : 0), 0);
-    filledLabel.textContent = 'fraction of cells filled: ' + (filledCount / numCells).toFixed(3);
-
+    // Occupancy only changes on entry (+1) and exit (-1); bulk hops conserve it.
+    // So we track filledCount incrementally instead of scanning the array each step.
     timesteps++;
     if (timesteps > minTimesteps) {
-      runningFlux += left ? 1 : 0;
+      if (left) runningFlux++;
       runningFluxCount++;
-      fluxLabel.textContent = 'long term average flux: ' + (runningFlux / runningFluxCount).toFixed(4);
     }
   }
 
@@ -184,44 +184,71 @@
     }
   }
 
+  // Logarithmic speed control: the slider position (0..1000) maps exponentially
+  // to SPEED_MIN..SPEED_MAX steps/sec, so the low end keeps fine particle-by-particle
+  // control while the top end reaches statistics-gathering speeds. The label shows
+  // the actual mapped steps/sec, not the raw slider position.
+  const SPEED_MIN = 1, SPEED_MAX = 5000;
+  function currentSpeed() {
+    const t = parseFloat(speedSlider.value) / 1000;
+    return Math.max(SPEED_MIN, Math.round(SPEED_MIN * Math.pow(SPEED_MAX / SPEED_MIN, t)));
+  }
+
   let lastStepTime = 0;
-  function stepDuration() { return 1000 / parseFloat(speedSlider.value); }
+  function stepDuration() { return 1000 / currentSpeed(); }
+
+  // Stats are refreshed once per frame, not once per step: the sim may run many
+  // steps between frames, and per-step textContent writes were a real bottleneck
+  // at high speed. Only the latest state is ever drawn, so intermediate steps are
+  // computed but never rendered — i.e. "draw every Nth state" is automatic.
+  function updateStats() {
+    filledLabel.textContent = 'fraction of cells filled: ' + (filledCount / numCells).toFixed(3);
+    if (runningFluxCount > 0)
+      fluxLabel.textContent = 'long term average flux: ' + (runningFlux / runningFluxCount).toFixed(4);
+  }
 
   function loop(now) {
     requestAnimationFrame(loop);
     if (!lastStepTime) lastStepTime = now;
-    const sd      = stepDuration();
-    let elapsed   = now - lastStepTime;
-    const maxBatch = Math.min(50, Math.ceil(elapsed / sd));
+    const sd = stepDuration();
+    let elapsed = now - lastStepTime;
+    // Recover from long stalls (e.g. a backgrounded tab) instead of trying to
+    // replay thousands of skipped steps in one frame.
+    if (elapsed > 250) { elapsed = sd; lastStepTime = now - sd; }
+
     let ran = 0;
-    while (elapsed >= sd && ran < maxBatch) {
+    const start = performance.now();
+    while (elapsed >= sd) {
       simStep();
       lastStepTime += sd;
-      elapsed      -= sd;
+      elapsed -= sd;
       ran++;
+      // Cap compute at ~8 ms/frame. If the requested speed exceeds what this CPU
+      // can deliver, run as many steps as fit and resync to the wall clock rather
+      // than freezing or accumulating an unbounded backlog.
+      if ((ran & 63) === 0 && performance.now() - start > 8) { lastStepTime = now; break; }
     }
+    if (ran) updateStats();
     draw();
   }
 
   function reset() { initSim(); lastStepTime = 0; }
 
+  // Changing cells, alpha, or beta resets the lattice and the long-term-average
+  // accumulator (matches the GlowScript original, which binds all three to reset).
+  // initSim() re-reads the slider values and refreshes their labels.
   cellsSlider.addEventListener('input', reset);
-  alphaSlider.addEventListener('input', () => {
-    alpha = parseFloat(alphaSlider.value);
-    alphaLabel.textContent = 'α: ' + alpha.toFixed(2);
-  });
-  betaSlider.addEventListener('input', () => {
-    beta = parseFloat(betaSlider.value);
-    betaLabel.textContent = 'β: ' + beta.toFixed(2);
-  });
+  alphaSlider.addEventListener('input', reset);
+  betaSlider.addEventListener('input', reset);
   speedSlider.addEventListener('input', () => {
-    speedLabel.textContent = 'simulation speed: ' + speedSlider.value;
+    speedLabel.textContent = 'simulation speed: ' + currentSpeed();
   });
   window.addEventListener('resize', () => { layout(); });
 
   numCells = parseInt(cellsSlider.value);
   layout();
   initSim();
+  speedLabel.textContent = 'simulation speed: ' + currentSpeed();
   requestAnimationFrame(loop);
 })();
 </script>
