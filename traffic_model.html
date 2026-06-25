@@ -279,11 +279,16 @@
 
   // ── Animation loop ─────────────────────────────────────────────────────
   // GlowScript runs one NS step every 2/speed seconds (rate(20*speed) over a
-  // 40-frame cycle). We match that with wall-clock pacing and interpolate
-  // smoothly between steps.
-  let lastTickTime = 0;
+  // 40-frame cycle). Within each step it ANIMATES the move over the first half
+  // (move_frames=20 of tick_frames=40) and then PAUSES for the second half, so
+  // the discrete cellular-automaton steps are visually obvious. We reproduce
+  // that: the interpolation reaches the destination at the half-step, then
+  // holds there until the next step commits.
+  const MOVE_FRAC = 0.5;                             // animate first half, pause second half
   const tickDuration = () => 2000 / values.speed;   // ms per NS step
+  const animFrac = (elapsed, td) => Math.min(1, (elapsed / td) / MOVE_FRAC);
 
+  let lastTickTime = 0;
   function loop(now) {
     requestAnimationFrame(loop);
     if (!lastTickTime) lastTickTime = now;
@@ -291,7 +296,7 @@
     let elapsed = now - lastTickTime;
     let guard = 0;
     while (elapsed >= td && guard++ < 60) { tick(); lastTickTime += td; elapsed -= td; }
-    draw(Math.min(1, elapsed / td));
+    draw(animFrac(elapsed, td));
   }
 
   function reset() { initSim(); lastTickTime = 0; }
