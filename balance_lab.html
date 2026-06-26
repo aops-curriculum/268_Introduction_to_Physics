@@ -10,14 +10,17 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; overflow: hidden; }
     body {
-      position: relative;
-      background: #f5f5f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #cfe9f9;   /* sky top colour — best blend for the sky/ground letterbox strips */
       font-family: 'Segoe UI', system-ui, sans-serif;
       user-select: none;
     }
     canvas {
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
+      aspect-ratio: 137 / 72;
+      height: min(100%, 52.555vw);   /* (72/137)*100 */
+      width: auto;
       display: block; touch-action: none;
     }
   </style>
