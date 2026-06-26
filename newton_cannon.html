@@ -261,7 +261,7 @@ function draw() {
       // Speed label near the tail (current mouse pos)
       const speed = Math.hypot(dx, dy) / SCALE * SPEED_MS;
       ctx.save();
-      ctx.font         = 'bold 13px Arial, sans-serif';
+      ctx.font         = 'bold 26px Arial, sans-serif';
       ctx.fillStyle    = '#222';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'bottom';
@@ -273,7 +273,7 @@ function draw() {
   // ── Instructions (shown when ball is idle) ────────────────────────────────
   if (Math.hypot(bvx, bvy) < 1e-9 && !drag && !landed) {
     ctx.save();
-    ctx.font         = '14px Arial, sans-serif';
+    ctx.font         = '28px Arial, sans-serif';
     ctx.fillStyle    = '#666';
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'bottom';
