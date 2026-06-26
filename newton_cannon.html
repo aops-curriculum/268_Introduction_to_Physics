@@ -36,7 +36,7 @@ const EARTH_R   = 1.0;     // Earth radius
 const GM        = 1.0;     // gravitational parameter
 const DEF_TOWER = 0.3;     // default tower height (sim units)
 const BALL_R    = 0.06;    // ball radius (sim units)
-const SPEED_KMS = 9.2;     // km/s per sim velocity unit (matches original GlowScript)
+const SPEED_MS = 9200;     // m/s per sim velocity unit (matches original GlowScript)
 const DT        = 0.0001;  // physics timestep (sim time)
 
 // ── Display ───────────────────────────────────────────────────────────────────
@@ -259,13 +259,13 @@ function draw() {
       ctx.restore();
 
       // Speed label near the tail (current mouse pos)
-      const speed = Math.hypot(dx, dy) / SCALE * SPEED_KMS;
+      const speed = Math.hypot(dx, dy) / SCALE * SPEED_MS;
       ctx.save();
       ctx.font         = 'bold 13px Arial, sans-serif';
       ctx.fillStyle    = '#222';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(speed.toFixed(2) + ' km/s', cx, cy - 8);
+      ctx.fillText(speed.toFixed(0) + ' m/s', cx, cy - 8);
       ctx.restore();
     }
   }
