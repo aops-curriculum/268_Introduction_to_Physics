@@ -90,14 +90,16 @@
     const W = 800, H = 455, TRAY_W = 96;
     function fit() {
       const dpr = window.devicePixelRatio || 1;
+      const Z = (window._userZoom > 1 ? window._userZoom : 1);
       const cw = canvas.clientWidth, ch = canvas.clientHeight;
       if (!cw || !ch) return;
-      canvas.width  = Math.round(cw * dpr);
-      canvas.height = Math.round(ch * dpr);
+      canvas.width  = Math.round(cw * dpr * Z);
+      canvas.height = Math.round(ch * dpr * Z);
       ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
     }
     new ResizeObserver(fit).observe(canvas);
     fit();
+    window._fitCanvas = fit;
     const SNAP = 18;
     const R_WIRE = 1e-6;
     const R_SWITCH = 1e-6, R_AMMETER = 1e-6;
@@ -1444,6 +1446,7 @@
     }
     lab.innerHTML         = Z.toFixed(1) + '&#215;';
     rst.style.opacity     = (Z > 1 || tx || ty) ? '1' : '0.4';
+    window._fitCanvas && window._fitCanvas();
   }
 
   document.getElementById('_zi').onclick = function () {
