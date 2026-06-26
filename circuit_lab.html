@@ -913,12 +913,12 @@
           const pr = volt.probes[i];
           if (Math.hypot(mx - pr.x, my - pr.y) < 14) {
             drag = { kind: 'probe', i, moved: 0 };
-            return;
+            e.stopPropagation(); return;
           }
         }
         if (insideVoltBody(mx, my)) {
           drag = { kind: 'vbody', dx: volt.x - mx, dy: volt.y - my, moved: 0 };
-          return;
+          e.stopPropagation(); return;
         }
       }
       const j = juncAt(mx, my);
@@ -929,12 +929,12 @@
         } else {
           drag = { kind: 'junction', j, moved: 0 };
         }
-        return;
+        e.stopPropagation(); return;
       }
       const p = partAt(mx, my);
       if (p) {
         drag = { kind: 'body', p, moved: 0 };
-        return;
+        e.stopPropagation(); return;
       }
       const t = trayAt(mx, my);
       if (t) {
@@ -952,7 +952,7 @@
           const np = addPart(t, mx - d.len / 2, my, mx + d.len / 2, my, {});
           drag = { kind: 'body', p: np, moved: 0 };
         }
-        return;
+        e.stopPropagation(); return;
       }
     });
 
