@@ -104,17 +104,21 @@
   <canvas id="c" width="590" height="500"></canvas>
 
   <div id="panel">
-    <div class="grp">
+    <div class="grp" id="grpPendulum">
       <div class="gt">Pendulum</div>
-      <div class="row"><span class="lab">Length</span>
-        <input type="number" id="lenNum" min="0.10" max="1.00" step="0.01" value="0.70">
-        <span class="un">m</span></div>
-      <input type="range" id="lenSl" min="0.10" max="1.00" step="0.01" value="0.70">
-      <div class="row"><span class="lab">Mass</span><span class="val" id="massVal">1.00 kg</span></div>
-      <input type="range" id="massSl" min="0.1" max="1.5" step="0.05" value="1.0">
+      <div id="lenGroup" style="display:flex;flex-direction:column;gap:3px">
+        <div class="row"><span class="lab">Length</span>
+          <input type="number" id="lenNum" min="0.10" max="1.00" step="0.01" value="0.70">
+          <span class="un">m</span></div>
+        <input type="range" id="lenSl" min="0.10" max="1.00" step="0.01" value="0.70">
+      </div>
+      <div id="massGroup" style="display:flex;flex-direction:column;gap:3px">
+        <div class="row"><span class="lab">Mass</span><span class="val" id="massVal">1.00 kg</span></div>
+        <input type="range" id="massSl" min="0.1" max="1.5" step="0.05" value="1.0">
+      </div>
     </div>
 
-    <div class="grp">
+    <div class="grp" id="grpGravity">
       <div class="gt">Gravity</div>
       <div class="pgrid">
         <button class="pbtn" id="pbEarth">Earth</button>
@@ -131,13 +135,13 @@
       <div id="gMystery" style="display:none">g = ? &nbsp;(unknown)</div>
     </div>
 
-    <div class="grp">
+    <div class="grp" id="grpFriction">
       <div class="gt">Friction</div>
       <input type="range" id="fricSl" min="0" max="100" step="1" value="0">
       <div class="ends"><span>None</span><span>Lots</span></div>
     </div>
 
-    <div class="grp">
+    <div class="grp" id="grpTools">
       <div class="gt">Tools</div>
       <label><input type="checkbox" id="cbStopwatch"> Stopwatch</label>
       <label><input type="checkbox" id="cbRuler"> Ruler</label>
@@ -218,6 +222,15 @@
     const SWFIXED  = qflag('swfixed');       // stopwatch always on, no checkbox
     const NOSTOP   = qflag('nostop');        // ?nostop=1 → hide "Stop bob" button
     const NOPLAYER = qflag('noplayer');      // ?noplayer=1 → hide pause / step / speed controls
+    const NOGRAVITY  = qflag('nogravity');   // hide gravity panel section
+    const NOFRICTION = qflag('nofriction');  // hide friction panel section
+    const NOMASS     = qflag('nomass');      // hide mass slider in panel
+    const NOLENGTH   = qflag('nolength');    // hide length controls in panel
+    const NOTOOLS    = qflag('notools');     // hide tools section in panel
+    const NORESET    = qflag('noreset');     // hide Reset button
+    const NOPAUSE    = qflag('nopause');     // hide pause/play button
+    const NOSTEP     = qflag('nostep');      // hide step button
+    const NOCLUSTER  = qflag('nocluster');   // hide all bottom canvas controls
 
     // ── State ────────────────────────────────────────────────
     let S;                 // mutable sim state
@@ -270,7 +283,13 @@
       const swLab = cbStopwatch.closest('label');
       if (swLab) swLab.style.display = 'none';
     }
-    if (NOPANEL) document.getElementById('panel').style.display = 'none';
+    if (NOPANEL)    document.getElementById('panel').style.display     = 'none';
+    if (NOGRAVITY)  $('grpGravity').style.display  = 'none';
+    if (NOFRICTION) $('grpFriction').style.display = 'none';
+    if (NOTOOLS)    $('grpTools').style.display    = 'none';
+    if (NORESET)    $('resetBtn').style.display    = 'none';
+    if (NOLENGTH)   $('lenGroup').style.display    = 'none';
+    if (NOMASS)     $('massGroup').style.display   = 'none';
 
     // ── Panel events ─────────────────────────────────────────
     function setLength(v) {
@@ -610,7 +629,7 @@
     }
 
     function drawCluster() {
-      if (CLEAN) return;
+      if (CLEAN || NOCLUSTER) return;
       ctx.save();
       ctx.textBaseline = 'middle';
       // stop-bob button
@@ -644,33 +663,37 @@
           radio(CL.rSlow, S.slow, 'Slow motion');
         }
         // pause / play
-        const pb = CL.pause;
-        ctx.beginPath(); ctx.arc(pb.cx, pb.cy, pb.r, 0, Math.PI * 2);
-        ctx.fillStyle = hoverKind === 'btnPause' ? '#dcebf8' : '#e9f2fa'; ctx.fill();
-        ctx.strokeStyle = '#3a78b5'; ctx.lineWidth = 1.5; ctx.stroke();
-        ctx.fillStyle = '#1a4a7a';
-        if (S.paused) {        // play triangle
-          ctx.beginPath();
-          ctx.moveTo(pb.cx - 4, pb.cy - 6.5);
-          ctx.lineTo(pb.cx + 7, pb.cy);
-          ctx.lineTo(pb.cx - 4, pb.cy + 6.5);
-          ctx.closePath(); ctx.fill();
-        } else {               // pause bars
-          ctx.fillRect(pb.cx - 5.5, pb.cy - 6, 4, 12);
-          ctx.fillRect(pb.cx + 1.5, pb.cy - 6, 4, 12);
+        if (!NOPAUSE) {
+          const pb = CL.pause;
+          ctx.beginPath(); ctx.arc(pb.cx, pb.cy, pb.r, 0, Math.PI * 2);
+          ctx.fillStyle = hoverKind === 'btnPause' ? '#dcebf8' : '#e9f2fa'; ctx.fill();
+          ctx.strokeStyle = '#3a78b5'; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = '#1a4a7a';
+          if (S.paused) {        // play triangle
+            ctx.beginPath();
+            ctx.moveTo(pb.cx - 4, pb.cy - 6.5);
+            ctx.lineTo(pb.cx + 7, pb.cy);
+            ctx.lineTo(pb.cx - 4, pb.cy + 6.5);
+            ctx.closePath(); ctx.fill();
+          } else {               // pause bars
+            ctx.fillRect(pb.cx - 5.5, pb.cy - 6, 4, 12);
+            ctx.fillRect(pb.cx + 1.5, pb.cy - 6, 4, 12);
+          }
         }
         // step
-        const st = CL.step;
-        ctx.beginPath(); ctx.arc(st.cx, st.cy, st.r, 0, Math.PI * 2);
-        ctx.fillStyle = hoverKind === 'btnStep' ? '#dcebf8' : '#eef4fa'; ctx.fill();
-        ctx.strokeStyle = '#6e94b5'; ctx.lineWidth = 1.2; ctx.stroke();
-        ctx.fillStyle = '#1a4a7a';
-        ctx.beginPath();
-        ctx.moveTo(st.cx - 5, st.cy - 4.5);
-        ctx.lineTo(st.cx + 1.5, st.cy);
-        ctx.lineTo(st.cx - 5, st.cy + 4.5);
-        ctx.closePath(); ctx.fill();
-        ctx.fillRect(st.cx + 3, st.cy - 4.5, 2, 9);
+        if (!NOSTEP) {
+          const st = CL.step;
+          ctx.beginPath(); ctx.arc(st.cx, st.cy, st.r, 0, Math.PI * 2);
+          ctx.fillStyle = hoverKind === 'btnStep' ? '#dcebf8' : '#eef4fa'; ctx.fill();
+          ctx.strokeStyle = '#6e94b5'; ctx.lineWidth = 1.2; ctx.stroke();
+          ctx.fillStyle = '#1a4a7a';
+          ctx.beginPath();
+          ctx.moveTo(st.cx - 5, st.cy - 4.5);
+          ctx.lineTo(st.cx + 1.5, st.cy);
+          ctx.lineTo(st.cx - 5, st.cy + 4.5);
+          ctx.closePath(); ctx.fill();
+          ctx.fillRect(st.cx + 3, st.cy - 4.5, 2, 9);
+        }
       }
       ctx.restore();
     }
@@ -721,11 +744,11 @@
 
     function hitTest(mx, my) {
       // playback cluster (topmost)
-      if (!CLEAN) {
+      if (!CLEAN && !NOCLUSTER) {
         if (!NOSTOP && inRect(mx, my, CL.stop.x, CL.stop.y, CL.stop.w, CL.stop.h)) return 'btnStop';
         if (!NOPLAYER) {
-          if (inCircle(mx, my, CL.pause)) return 'btnPause';
-          if (inCircle(mx, my, CL.step)) return 'btnStep';
+          if (!NOPAUSE && inCircle(mx, my, CL.pause)) return 'btnPause';
+          if (!NOSTEP && inCircle(mx, my, CL.step)) return 'btnStep';
           if (!NOSLOW) {
             if (Math.hypot(mx - CL.rNorm.cx, my - CL.rNorm.cy) < 9 ||
                 (mx > CL.rNorm.cx && mx < CL.rNorm.cx + 56 && Math.abs(my - CL.rNorm.cy) < 9)) return 'btnNorm';
@@ -959,8 +982,17 @@
         "name": "panel",
         "type": "toggle",
         "default": 1,
-        "desc": "Show control panel"
+        "desc": "Show side control panel (panel=0 to hide)"
     },
+    {name:'nogravity',  type:'toggle', default:0, desc:'Hide gravity panel section'},
+    {name:'nofriction', type:'toggle', default:0, desc:'Hide friction panel section'},
+    {name:'nolength',   type:'toggle', default:0, desc:'Hide length controls in panel'},
+    {name:'nomass',     type:'toggle', default:0, desc:'Hide mass slider in panel'},
+    {name:'notools',    type:'toggle', default:0, desc:'Hide tools section (stopwatch/ruler/timer checkboxes)'},
+    {name:'noreset',    type:'toggle', default:0, desc:'Hide Reset button'},
+    {name:'nopause',    type:'toggle', default:0, desc:'Hide pause/play button (canvas bottom)'},
+    {name:'nostep',     type:'toggle', default:0, desc:'Hide step button (canvas bottom)'},
+    {name:'nocluster',  type:'toggle', default:0, desc:'Hide all bottom canvas controls at once'},
     {
         "name": "maxscale",
         "type": "number",
@@ -996,8 +1028,8 @@
         "step": 10,
         "default": 320,
         "desc": "Ceiling on auto-reported iframe height (px)"
-    }
-  {name:'zoom', type:'toggle', default:0, desc:'Enable zoom/pan controls'},
+    },
+    {name:'zoom', type:'toggle', default:0, desc:'Enable zoom/pan controls'},
 ];
 
   var EMBED_KEYS = ['cheat'];
