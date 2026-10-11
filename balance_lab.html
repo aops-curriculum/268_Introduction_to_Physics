@@ -62,11 +62,16 @@
     const TYPES = {
       b5:  { kind: 'brick', n: 1, mass: 5,  w: 46, h: 17, label: '5 kg'  },
       b10: { kind: 'brick', n: 2, mass: 10, w: 46, h: 34, label: '10 kg' },
+      child: { kind: 'person', mass: 20, w: 34, h: 50, label: '20 kg', size: 0.68, shirt: '#3d6fc4', pants: '#c9a46a', hair: '#7a4a22', skin: '#e8b98f' },
+      adult: { kind: 'person', mass: 80, w: 48, h: 74, label: '80 kg', size: 1.0,  shirt: '#2c3e66', pants: '#8c7d63', hair: '#2b211b', skin: '#a8714f' },
     };
-    const KIT_ITEMS = ['b5', 'b10'];
 
     // ── URL parameters ───────────────────────────────────────
     const Q = new URLSearchParams(location.search);
+    // kit=people swaps the two bricks for a child (20 kg) and an adult (80 kg)
+    const PEOPLE = (Q.get('kit') || '').toLowerCase() === 'people';
+    const KIT_ITEMS = PEOPLE ? ['child', 'adult'] : ['b5', 'b10'];
+    if (PEOPLE) KITP.h = 86;
     const qBool = (name, dflt) => {
       const v = Q.get(name);
       if (v === null) return dflt;
@@ -89,7 +94,7 @@
     (function parsePlace() {
       const str = Q.get('place');
       if (!str) return;
-      const map = { '5': 'b5', '10': 'b10' };
+      const map = { '5': 'b5', '10': 'b10', 'child': 'child', 'adult': 'adult', '20': 'child', '80': 'adult' };
       const used = new Set();
       for (const tok of str.split(',')) {
         const m = tok.trim().match(/^([a-z0-9]+)@(-?\d*\.?\d+)$/i);
@@ -206,9 +211,51 @@
         ctx.textBaseline = 'alphabetic';
       }
     }
-    function drawObj(id) {
+    // A person sitting with arms around raised knees. Origin = where they sit
+    // on the board; f = +1 faces right, -1 faces left.
+    function drawPerson(t, f) {
+      ctx.save();
+      ctx.scale(t.size * f, t.size);
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      const edge = 'rgba(0,0,0,0.35)';
+      const limb = (x0, y0, x1, y1, w, col) => {
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+        ctx.strokeStyle = edge; ctx.lineWidth = w + 2; ctx.stroke();
+        ctx.strokeStyle = col;  ctx.lineWidth = w;     ctx.stroke();
+      };
+      // torso
+      rr(-19, -54, 22, 48, 8);
+      ctx.fillStyle = t.shirt; ctx.fill();
+      ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.stroke();
+      // seat + thigh + shin + shoe
+      limb(-12, -8, 13, -32, 14, t.pants);
+      limb(13, -32, 18, -7, 12, t.pants);
+      ctx.beginPath(); ctx.ellipse(21, -4, 8, 4, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#3a3330'; ctx.fill();
+      // head
+      ctx.beginPath(); ctx.arc(-5, -63, 11, 0, Math.PI * 2);
+      ctx.fillStyle = t.skin; ctx.fill();
+      ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(-6, -66, 11.5, Math.PI, Math.PI * 1.97);
+      ctx.lineTo(-10, -67); ctx.lineTo(-16, -57); ctx.lineTo(-17.5, -66);
+      ctx.fillStyle = t.hair; ctx.fill();
+      ctx.beginPath(); ctx.arc(1, -62.5, 2.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.beginPath(); ctx.arc(1.8, -62.5, 1.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#222'; ctx.fill();
+      ctx.beginPath(); ctx.arc(0, -58.5, 3, 0.15 * Math.PI, 0.75 * Math.PI);
+      ctx.strokeStyle = '#6b3b2a'; ctx.lineWidth = 1.2; ctx.stroke();
+      // arm hugging the knees
+      limb(-7, -47, 11, -30, 7, t.shirt);
+      ctx.beginPath(); ctx.arc(13, -29, 3.6, 0, Math.PI * 2);
+      ctx.fillStyle = t.skin; ctx.fill();
+      ctx.restore();
+    }
+    function drawObj(id, f = 1) {
+      const t = TYPES[id];
+      if (t.kind === 'person') { drawPerson(t, f); return; }
       const labels = { b5: 'M\u2081', b10: 'M\u2082' };
-      drawBrickStack(TYPES[id].n, labels[id]);
+      drawBrickStack(t.n, labels[id]);
     }
 
     // ── Scene drawing ────────────────────────────────────────
@@ -361,7 +408,7 @@
       for (const it of items) {
         ctx.save();
         ctx.translate(it.o.pos * S, BOARD_OFFSET - it.base);
-        drawObj(it.o.type);
+        drawObj(it.o.type, it.o.pos < 0 ? 1 : -1);   // people face the pivot
         ctx.restore();
       }
       ctx.restore();
@@ -418,7 +465,8 @@
         [KITP.x + 48, KITP.y + 46],
         [KITP.x + 112, KITP.y + 46],
       ];
-      const scale = 1;
+      const scale = PEOPLE ? 0.8 : 1;
+      if (PEOPLE) { cells[0][1] = KITP.y + 64; cells[1][1] = KITP.y + 64; }
       ctx.font = '11px Segoe UI';
       KIT_ITEMS.forEach((id, i) => {
         if (isUsed(id)) return;               // hide a brick once it's placed/dragging
@@ -442,7 +490,7 @@
           ctx.fillStyle = '#93aabb';
           ctx.font = '13px Segoe UI';
           ctx.textAlign = 'center';
-          ctx.fillText('Drag bricks onto the plank', W / 2, 84);
+          ctx.fillText(PEOPLE ? 'Drag people onto the seesaw' : 'Drag bricks onto the plank', W / 2, PEOPLE ? 104 : 84);
         }
       }
       const items = layout();
@@ -454,7 +502,7 @@
         ctx.save();
         ctx.globalAlpha = 0.9;
         ctx.translate(drag.mx, drag.my + TYPES[drag.type].h / 2);
-        drawObj(drag.type);
+        drawObj(drag.type, drag.mx < PX ? 1 : -1);
         ctx.restore();
       }
     }
@@ -603,7 +651,17 @@
         "name": "place",
         "type": "text",
         "default": "",
-        "desc": "Pre-placed blocks: \"5@-1,10@2\" (mass in kg @ position in m)"
+        "desc": "Pre-placed blocks: \"5@-1,10@2\" (mass in kg @ position in m); with kit=people use child@-2,adult@0.5"
+    },
+    {
+        "name": "kit",
+        "type": "select",
+        "values": [
+            "bricks",
+            "people"
+        ],
+        "default": "bricks",
+        "desc": "Objects in the kit: 5 kg + 10 kg bricks, or a 20 kg child + 80 kg adult"
     },
     {
         "name": "maxscale",
