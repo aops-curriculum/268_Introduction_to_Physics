@@ -121,10 +121,10 @@
     for (let i = 0; i < numCells; i++) {
       const th = cellArc * i;
       const x  = cx + R * Math.cos(th);
-      const y  = cy + R * Math.sin(th);
+      const y  = cy - R * Math.sin(th);
       ctx.save();
       ctx.translate(x, y);
-      ctx.rotate(th + Math.PI / 2);
+      ctx.rotate(-(th + Math.PI / 2));
       ctx.fillRect(-cellSize / 2, -cellSize / 2, cellSize, cellSize);
       ctx.restore();
     }
@@ -132,7 +132,7 @@
     for (const c of cars) {
       const th = 2 * Math.PI * (c.cell + c.speed * animT) / numCells;
       ctx.beginPath();
-      ctx.arc(cx + R * Math.cos(th), cy + R * Math.sin(th), carR, 0, 2 * Math.PI);
+      ctx.arc(cx + R * Math.cos(th), cy - R * Math.sin(th), carR, 0, 2 * Math.PI);
       ctx.fillStyle = SPEED_COLORS[Math.max(0, Math.min(5, c.speed))];
       ctx.fill();
     }
